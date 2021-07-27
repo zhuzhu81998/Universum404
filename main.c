@@ -3,8 +3,13 @@
 #include <Windows.h>
 #include <process.h>
 #include <Ws2tcpip.h>
+#include <string.h>
+#include <stdlib.h>
+
+#pragma comment(lib,"ws2_32.lib")
 
 #define number_connection 2049 //1 bigger than actual
+const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite\\";
 
 struct connection
 {
@@ -18,8 +23,6 @@ struct connection connections[number_connection - 1];
 struct sockaddr_in fsin;
 SOCKET ssock;
 int numTh = 0;
-//SOCKET connecs[2048];
-//HANDLE connecThread[2048] = { NULL };
 
 int deleteClient(int curThread)
 {
@@ -34,7 +37,7 @@ int deleteClient(int curThread)
     }
 
     int i; //, j;
-    for(i = 0; connections[i].connec != '\0' && i < (number_connection - 1); i++){ //i is going to be infinite if all connecs exist
+    for(i = 0; connections[i].connec != '\0' && i < (number_connection - 1); i++){ //could be improved
         connections[curThread + i] = connections[curThread + i + 1];
     }
     //i--;
@@ -64,6 +67,39 @@ int deleteClient(int curThread)
     return 0;
 }
 
+int readFile(char *file, char *rurl)
+{
+    errno_t errc;
+
+    FILE *f;
+    char *url = (char *)malloc(200);
+
+    int test = snprintf(url, 200,"%s%s", DIR, rurl);
+
+    errc = fopen_s(&f, url, "r");
+
+    //ZeroMemory(file, sizeof(file));
+    if(f == NULL){
+        printf("FAILURE");
+        return 1;
+    }
+    else{
+        //do {
+        //    printf("fast\n");
+        //    c = fgetc(f);
+        //    printf("not anymore\n");
+        //    if(sprintf(file, "%s%c", file, c) < 0){
+        //        printf("Failure");
+        //    }
+        //    printf("idk what imdoing");
+        //} while(c != EOF);
+        fread_s(file, 1000000, 2048, 1, f);
+    }
+    fclose(f);
+    free(url);
+    return 0;
+}
+
 unsigned int __stdcall process(void *arglist)
 {
     int curThread = (int)arglist;
@@ -76,10 +112,16 @@ unsigned int __stdcall process(void *arglist)
     connections[curThread].ip = fsin.sin_addr;
     connections[curThread].port = fsin.sin_port;
 
+    char *file = malloc(1000000);
+    readFile(file, strdup("index.html"));
+
+    send(connections[curThread].connec, file, 2048, 0);
     //send back the asked content with a header
 
     //printf("%d\n", curThread);
     deleteClient(curThread);
+    free(file);
+    _endthreadex(0);
     return 0;
 }
 
@@ -116,13 +158,13 @@ int main()
 
     listen(listen_sock, 5);
 
-    int threadID;
+    unsigned int threadID;
     int len = sizeof(SOCKADDR);
     for(numTh = 0; ; numTh++){
         ssock = accept(listen_sock, (struct sockaddr *)&fsin, &len);
         connections[numTh].Thread = (HANDLE)_beginthreadex(NULL, 0, process, (void *)numTh, 0, &threadID);
-        //printf("%d.: %d\n", numTh, connections[numTh].Thread);
     }
+    
     closesocket(listen_sock);
 
     closesocket(ssock);
@@ -131,7 +173,6 @@ int main()
         CloseHandle(connections[i].Thread);
         closesocket(connections[i].connec);
     }
-
     WSACleanup();
     return 0;
 }
