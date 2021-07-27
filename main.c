@@ -103,7 +103,6 @@ int readFile(char *file, char *rurl)
 unsigned int __stdcall process(void *arglist)
 {
     int curThread = (int)arglist;
-    HANDLE currentH = connections[curThread].Thread;
 
     connections[curThread].connec = ssock;
 
