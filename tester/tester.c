@@ -5,11 +5,12 @@
 #include <process.h>
 #include <math.h>
 
+#define numberC 20
 
 #pragma comment(lib, "ws2_32.lib")
 
-SOCKET client_sock[2048];
-HANDLE hThread[2048];
+SOCKET client_sock[numberC];
+HANDLE hThread[numberC];
 unsigned int tID;
 
 char ipAport[30] = { 0 };
@@ -24,6 +25,8 @@ unsigned int __stdcall process(void *arglist)
 
     char buf[2048];
     while(TRUE){
+        client_sock[curThread] = socket(AF_INET, SOCK_STREAM, 0);
+
         if(connect(client_sock[curThread], (struct sockaddr *)&server, sizeof(server)) == 0){
             if(recv(client_sock[curThread], buf, 2048, 0) > 0){
                 printf("%s\n", buf);
@@ -34,7 +37,7 @@ unsigned int __stdcall process(void *arglist)
         }
         closesocket(client_sock[curThread]);
     }
-    Sleep(2000);
+    Sleep(1000);
     _endthreadex(0);
 }
 
@@ -59,7 +62,7 @@ int main()
 		return 1;
 	}
 
-    for(int i = 0; i < 2048; i++){
+    for(int i = 0; i < numberC; i++){
         client_sock[i] = socket(AF_INET, SOCK_STREAM, 0);
     }
     int i;
@@ -82,13 +85,12 @@ int main()
     server.sin_port = htons(port);
     server.sin_addr.s_addr = inet_addr(ip);
 
-    //printf("hh");
-    for(int i = 0; i < 2048; i++){
+    for(int i = 0; i < numberC; i++){
         hThread[i] = (HANDLE)_beginthreadex(NULL, 0, process, (void *)i, 0, &tID);
         Sleep(500);
     }
 
-    for(int i = 0; i < 2048; i++){
+    for(int i = 0; i < numberC; i++){
         closesocket(client_sock[i]);
         CloseHandle(hThread[i]);
     }

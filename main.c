@@ -1,3 +1,6 @@
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib,"ws2_32.lib")
+
 #include <stdio.h>
 #include <winsock2.h>
 #include <Windows.h>
@@ -5,66 +8,40 @@
 #include <Ws2tcpip.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
+#include <aclapi.h>
+#include <tchar.h>
 
-#pragma comment(lib,"ws2_32.lib")
 
-#define number_connection 2049 //1 bigger than actual
+#define number_connection 101 //1 bigger than actual
 const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite\\";
 
 struct connection
 {
-    SOCKET connec;
+    SOCKET connec[10];
     HANDLE Thread;
     IN_ADDR ip;
     int port;
+    struct sockaddr_in client;
 };
 
 struct connection connections[number_connection - 1];
-struct sockaddr_in fsin;
-SOCKET ssock;
-int numTh = 0;
 
-int deleteClient(int curThread)
+void CALLBACK APCf(ULONG_PTR param){
+}
+
+int addToList(int curThread, SOCKET csock)
 {
-    //printf("%d\n", connections[curThread].Thread);
-    if(CloseHandle(connections[curThread].Thread) == FALSE){
-        printf("close %d Handle failed\n", curThread);
-        return 1;
+    int n = 1;
+    for(int i = 0; i <= 9; i++){
+        if(connections[curThread].connec[i] == '\0'){
+            connections[curThread].connec[i] = csock;
+            n = 0;
+            break;
+        }
     }
-    if(closesocket(connections[curThread].connec) != 0){
-        printf("close %d socket failed\n", curThread);
-        return 1;
-    }
-
-    int i; //, j;
-    for(i = 0; connections[i].connec != '\0' && i < (number_connection - 1); i++){ //could be improved
-        connections[curThread + i] = connections[curThread + i + 1];
-    }
-    //i--;
-    //for(j = 0; connections[j].Thread != NULL; j++){
-    //    ;
-    //}
-
-    //connections[curThread].connec = connections[curThread + 1].connec;
-    //connections[curThread].Thread = connections[curThread + 1].Thread;
-    //connections[curThread].ip = connections[curThread + 1].ip;
-    //connections[curThread].port = connections[curThread + 1].port;
-    //i ist die Anzahl(>=0) <=2048
-    //curThread >= 0 <=2047
-    //
-    //int a;
-
-    //for(a = 0; a <= i - curThread; a++){
-    //    connections[curThread + a].connec = connections[curThread + a + 1].connec;
-    //    connections[curThread + a].Thread = connections[curThread + a + 1].Thread;
-    //}
-    //if((curThread + a ))
-    //connections[curThread + a].connec = '\0';
-    //connections[curThread + a].Thread = NULL;
-    //connections[curThread + a].port = 0;
-
-    numTh--;
-    return 0;
+    QueueUserAPC(APCf, connections[curThread].Thread, (ULONG_PTR)NULL);
+    return n;
 }
 
 int readFile(char *file, char *rurl)
@@ -84,15 +61,6 @@ int readFile(char *file, char *rurl)
         return 1;
     }
     else{
-        //do {
-        //    printf("fast\n");
-        //    c = fgetc(f);
-        //    printf("not anymore\n");
-        //    if(sprintf(file, "%s%c", file, c) < 0){
-        //        printf("Failure");
-        //    }
-        //    printf("idk what imdoing");
-        //} while(c != EOF);
         fread_s(file, 1000000, 2048, 1, f);
     }
     fclose(f);
@@ -100,26 +68,40 @@ int readFile(char *file, char *rurl)
     return 0;
 }
 
+
 unsigned int __stdcall process(void *arglist)
 {
     int curThread = (int)arglist;
 
-    connections[curThread].connec = ssock;
+    int stoppoint = 0;
 
-    //read the header from client
+    SleepEx(INFINITE, TRUE);
+    //connections[curThread].connec = ssock;
+    char *file;
 
-    connections[curThread].ip = fsin.sin_addr;
-    connections[curThread].port = fsin.sin_port;
+    for(int task = 0; ; task++){
+        if(task > 9){
+            task = 0;
+        }
+        if(connections[curThread].connec[task] == '\0'){
+            if(task == stoppoint){
+                SleepEx(INFINITE, TRUE);
+            }
+            continue;
+        }
+        stoppoint = task;
+        printf("Thread Nr. %d: Task Nr.: %d\n", curThread,task);
+        //read the header from client
+        file = malloc(1000000);
+        readFile(file, strdup("index.html"));
 
-    char *file = malloc(1000000);
-    readFile(file, strdup("index.html"));
+        send(connections[curThread].connec[task], file, 2048, 0);
+        //send back the asked content with a header
+        free(file);
 
-    send(connections[curThread].connec, file, 2048, 0);
-    //send back the asked content with a header
-
-    //printf("%d\n", curThread);
-    deleteClient(curThread);
-    free(file);
+        closesocket(connections[curThread].connec[task]);
+        connections[curThread].connec[task] = '\0';
+    }
     _endthreadex(0);
     return 0;
 }
@@ -127,13 +109,7 @@ unsigned int __stdcall process(void *arglist)
 
 int main()
 {
-    for(int i = 0; i <= (number_connection - 1); i++){
-        connections[i].connec = '\0';
-        connections[i].Thread = NULL;
-        connections[i].port = 0;
-    }
-
-    printf("Hello World\n");
+    printf("Please enter the port:\n");
     WSADATA wsa;
     if(WSAStartup(MAKEWORD(1, 1), &wsa) != 0){
         return 1;
@@ -143,7 +119,6 @@ int main()
     SOCKADDR_IN serverAddr;
 
     int port;
-    char *buf = NULL;
 
     scanf("%d", &port);
 
@@ -159,18 +134,37 @@ int main()
 
     unsigned int threadID;
     int len = sizeof(SOCKADDR);
-    for(numTh = 0; ; numTh++){
-        ssock = accept(listen_sock, (struct sockaddr *)&fsin, &len);
-        connections[numTh].Thread = (HANDLE)_beginthreadex(NULL, 0, process, (void *)numTh, 0, &threadID);
+
+    for(int curThread = 0; curThread < (number_connection - 1); curThread++){ //initialize the Threads
+        memset(connections[curThread].connec, '\0', sizeof(SOCKET) * 10);
+        //connections[curThread].Thread = NULL;
+        connections[curThread].port = 0;
+        connections[curThread].Thread = (HANDLE)_beginthreadex(NULL, 0, process, (void *)curThread, 0,  &threadID);
     }
+
+    int t = (unsigned)time(NULL);
+    int curThread = 0;
+    SOCKET csock;
+    for(int i = 0; ; i++){
+        srand(t + i);
+        curThread = (rand() % (number_connection - 1));
+
+        csock = accept(listen_sock, (struct sockaddr *)&connections[curThread].client, &len);
     
+        if(addToList(curThread, csock) != 0){
+            printf("Err assigning a task\n");
+            continue;
+        }
+    }
+
     closesocket(listen_sock);
 
-    closesocket(ssock);
 
     for(int i = 0; i < (number_connection - 1); i++){
         CloseHandle(connections[i].Thread);
-        closesocket(connections[i].connec);
+        for(int j = 0; j <= 9; j++){
+            closesocket(connections[i].connec[j]);
+        }
     }
     WSACleanup();
     return 0;
