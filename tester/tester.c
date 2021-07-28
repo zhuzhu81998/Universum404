@@ -24,20 +24,24 @@ unsigned int __stdcall process(void *arglist)
     int curThread = (int)arglist;
 
     char buf[2048];
+    int i = 0;
     while(TRUE){
+        //client_sock[curThread] = socket(AF_INET, SOCK_STREAM, 0);
         client_sock[curThread] = socket(AF_INET, SOCK_STREAM, 0);
-
         if(connect(client_sock[curThread], (struct sockaddr *)&server, sizeof(server)) == 0){
-            if(recv(client_sock[curThread], buf, 2048, 0) > 0){
-                printf("%s\n", buf);
+            while(recv(client_sock[curThread], buf, 2048, 0) > 0){
+                //printf("%s\n", buf);
+                printf("%d: %d\n", curThread, i);
             }
-            else{
-                
-            }
+            closesocket(client_sock[curThread]);
         }
-        closesocket(client_sock[curThread]);
+        else{
+            printf("Err: %d\n", WSAGetLastError());
+        }
+        Sleep(100);
+        i++;
+        //closesocket(client_sock[curThread]);
     }
-    Sleep(1000);
     _endthreadex(0);
 }
 
@@ -62,9 +66,6 @@ int main()
 		return 1;
 	}
 
-    for(int i = 0; i < numberC; i++){
-        client_sock[i] = socket(AF_INET, SOCK_STREAM, 0);
-    }
     int i;
 
     scanf_s("%s", ipAport, 30);
@@ -87,9 +88,12 @@ int main()
 
     for(int i = 0; i < numberC; i++){
         hThread[i] = (HANDLE)_beginthreadex(NULL, 0, process, (void *)i, 0, &tID);
-        Sleep(500);
     }
 
+    while(TRUE){
+
+    }
+    
     for(int i = 0; i < numberC; i++){
         closesocket(client_sock[i]);
         CloseHandle(hThread[i]);
