@@ -9,8 +9,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
-#include <aclapi.h>
-#include <tchar.h>
 
 
 #define number_connection 101 //1 bigger than actual
@@ -27,8 +25,7 @@ struct connection
 
 struct connection connections[number_connection - 1];
 
-void CALLBACK APCf(ULONG_PTR param){
-}
+void CALLBACK APCf(ULONG_PTR param){}
 
 int addToList(int curThread, SOCKET csock)
 {
@@ -68,7 +65,6 @@ int readFile(char *file, char *rurl)
     return 0;
 }
 
-
 unsigned int __stdcall process(void *arglist)
 {
     int curThread = (int)arglist;
@@ -99,13 +95,18 @@ unsigned int __stdcall process(void *arglist)
         //send back the asked content with a header
         free(file);
 
-        closesocket(connections[curThread].connec[task]);
+        if(closesocket(connections[curThread].connec[task]) != 0){
+            printf("Err closing %d socket: %d", curThread, WSAGetLastError());
+        }
         connections[curThread].connec[task] = '\0';
+    }
+
+    if(CloseHandle(connections[curThread].Thread) == FALSE){
+        printf("Err closing %d thread: %d", curThread, GetLastError());
     }
     _endthreadex(0);
     return 0;
 }
-
 
 int main()
 {
@@ -158,8 +159,6 @@ int main()
     }
 
     closesocket(listen_sock);
-
-
     for(int i = 0; i < (number_connection - 1); i++){
         CloseHandle(connections[i].Thread);
         for(int j = 0; j <= 9; j++){
