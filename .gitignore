@@ -6,3 +6,4 @@
 .vs
 build
 actions-runner
+test.c
