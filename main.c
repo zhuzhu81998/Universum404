@@ -41,17 +41,23 @@ struct connection connections[number_connection - 1];
 
 void CALLBACK APCf(ULONG_PTR param){}
 
-int response(char *res, char *resB, struct responseH *resH)
+char *response(int *hSize, struct responseH *resH)
 {
+    char *header;
+    *hSize = 1024;
     resH->status = 200;
     resH->res = "OK";
     resH->protocol = "HTTP/1.1";
-    if(snprintf(res, 2000000,"%s %d %s\r\nConnection: closed\r\n\r\n%s", resH->protocol, resH->status, resH->res, resB) > 0){
-        return 0;
-    }
-    else{
-        return 1;
-    }
+    header = (char *)malloc(*hSize);
+    ZeroMemory(header, *hSize);
+    snprintf(header, 1024, "%s %d %s\r\nConnection: keep-alive", resH->protocol, resH->status, resH->res);
+
+    //snprintf(buf, sizeof(buf), "Connection: keep-alive\r\n\r\n");
+    //printf("%s\n", buf);
+
+    //send(connections[curThread].connec[task], buf, sizeof(buf), 0);
+
+    return header;
 }
 
 int addToList(int curThread, SOCKET csock)
@@ -68,29 +74,65 @@ int addToList(int curThread, SOCKET csock)
     return n;
 }
 
-int readFile(char *file, char *rurl)
+char *readFile(int *fSize, char *rurl)
 {
     errno_t errc;
 
     FILE *f;
     char *url = (char *)malloc(200);
+    char *file = NULL;
 
     int test = snprintf(url, 200,"%s%s", DIR, rurl);
 
     errc = fopen_s(&f, url, "r");
 
-    //ZeroMemory(file, sizeof(file));
+    if(f == NULL){
+        printf("FAILURE");
+        return NULL;
+    }
+    else{
+        fseek(f, 0, SEEK_END);
+        *fSize = ftell(f);
+        rewind(f);
+
+        file = (char *)malloc(*fSize);
+        ZeroMemory(file, *fSize);
+        if(file == NULL){
+            printf("Memory Error");
+        }
+        else{
+            fread_s((void *)file, *fSize, *fSize, 1, f);
+        }
+    }
+    fclose(f);
+    free(url);
+    return file;
+}
+
+/*int resBody(char *file, char *rurl)
+{
+    char file[1024];
     if(f == NULL){
         printf("FAILURE");
         return 1;
     }
     else{
-        fread_s(file, 1000000, 2048, 1, f);
+        fseek(f, 0, SEEK_END);
+        fSize = ftell(f);
+        rewind(f);
+        fgets(file, sizeof(file), f);
+        while(!feof(f)){
+            printf("%s", file);
+            if(send(connections[curThread].connec[task], file, sizeof(file), 0) <= 0){
+                printf("Err: %d", WSAGetLastError());
+                return 1;
+            }
+            fgets(file, sizeof(file), f);
+        }
     }
-    fclose(f);
-    free(url);
+
     return 0;
-}
+}*/
 
 unsigned int __stdcall process(void *arglist)
 {
@@ -99,8 +141,10 @@ unsigned int __stdcall process(void *arglist)
     int stoppoint = 0;
 
     SleepEx(INFINITE, TRUE);
-    //connections[curThread].connec = ssock;
-    char *file;
+    int fSize = 0;
+    int hSize = 0;
+    char *header = NULL;
+    char *file = NULL;
 
     for(int task = 0; ; task++){
         if(task > 9){
@@ -123,15 +167,20 @@ unsigned int __stdcall process(void *arglist)
             connections[curThread].connec[task] = '\0';
             continue;
         }
-        file = (char *)malloc(1000000);
-        readFile(file, strdup("index.html"));
 
-        char *res = (char *)malloc(2000000);
         struct responseH resH;
-        response(res, file, &resH);
-        send(connections[curThread].connec[task], res, 2048, 0);
-        //send back the asked content with a header
+        
+        header = response(&hSize, &resH);
+        file = readFile(&fSize, strdup("index.html"));
+        char *res = (char *)malloc(hSize + fSize + 10);
+        ZeroMemory(res, hSize + fSize + 10);
+
+        snprintf(res, hSize + fSize + 10, "%s\r\n\r\n%s", header, file);
+
+        send(connections[curThread].connec[task], res, strlen(res), 0);
+
         free(file);
+        free(header);
 
         if(closesocket(connections[curThread].connec[task]) != 0){
             printf("Err closing %d socket: %d", curThread, WSAGetLastError());
