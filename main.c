@@ -1,4 +1,3 @@
-#pragma comment(lib, "advapi32.lib")
 #pragma comment(lib,"ws2_32.lib")
 
 #include <stdio.h>
@@ -118,6 +117,10 @@ unsigned int __stdcall process(void *arglist)
         char request[2048];
         if(recv(connections[curThread].connec[task], request, 2048, 0) <= 0){
             printf("Bad Request\n");
+            if(closesocket(connections[curThread].connec[task]) != 0){
+                printf("Err closing %d socket: %d", curThread, WSAGetLastError());
+            }
+            connections[curThread].connec[task] = '\0';
             continue;
         }
         file = (char *)malloc(1000000);
