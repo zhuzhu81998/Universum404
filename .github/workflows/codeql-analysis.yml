@@ -19,6 +19,7 @@ on:
     branches: [ master ]
   schedule:
     - cron: '18 12 * * 4'
+runs-on: [self-hosted, Windows]
 
 jobs:
   analyze:

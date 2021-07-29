@@ -5,3 +5,4 @@
 *.pdb
 .vs
 build
+actions-runner
