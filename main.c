@@ -23,9 +23,37 @@ struct connection
     struct sockaddr_in client;
 };
 
+struct requestH
+{
+    char *method;
+    char *protocol;
+    char *file;
+    char *Host;
+};
+
+struct responseH
+{
+    char *protocol;
+    int status;
+    char *res;
+};
+
 struct connection connections[number_connection - 1];
 
 void CALLBACK APCf(ULONG_PTR param){}
+
+int response(char *res, char *resB, struct responseH *resH)
+{
+    resH->status = 200;
+    resH->res = "OK";
+    resH->protocol = "HTTP/1.1";
+    if(snprintf(res, 2000000,"%s %d %s\r\nConnection: closed\r\n\r\n%s", resH->protocol, resH->status, resH->res, resB) > 0){
+        return 0;
+    }
+    else{
+        return 1;
+    }
+}
 
 int addToList(int curThread, SOCKET csock)
 {
@@ -87,11 +115,18 @@ unsigned int __stdcall process(void *arglist)
         }
         stoppoint = task;
         printf("Thread Nr. %d: Task Nr.: %d\n", curThread,task);
-        //read the header from client
-        file = malloc(1000000);
+        char request[2048];
+        if(recv(connections[curThread].connec[task], request, 2048, 0) <= 0){
+            printf("Bad Request\n");
+            continue;
+        }
+        file = (char *)malloc(1000000);
         readFile(file, strdup("index.html"));
 
-        send(connections[curThread].connec[task], file, 2048, 0);
+        char *res = (char *)malloc(2000000);
+        struct responseH resH;
+        response(res, file, &resH);
+        send(connections[curThread].connec[task], res, 2048, 0);
         //send back the asked content with a header
         free(file);
 
@@ -110,7 +145,6 @@ unsigned int __stdcall process(void *arglist)
 
 int main()
 {
-    printf("Please enter the port:\n");
     WSADATA wsa;
     if(WSAStartup(MAKEWORD(1, 1), &wsa) != 0){
         return 1;
@@ -119,11 +153,11 @@ int main()
 
     SOCKADDR_IN serverAddr;
 
-    int port;
-
-    scanf("%d", &port);
-
     ZeroMemory(&serverAddr, sizeof(serverAddr));
+
+    int port = 0;
+    printf("Please enter the port:\n");
+    scanf_s("%d", &port);
 
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(port);
@@ -165,6 +199,7 @@ int main()
             closesocket(connections[i].connec[j]);
         }
     }
+
     WSACleanup();
     return 0;
 }
