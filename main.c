@@ -162,7 +162,8 @@ char *readFile(int *fSize, char *rurl, int *err)
 
 unsigned int __stdcall process(void *arglist)
 {
-    int curThread = (int)arglist;
+    int curThread = *(int *)arglist;
+    printf("%d\n", curThread);
     int stoppoint = 0;
 
     SleepEx(INFINITE, TRUE);
@@ -185,7 +186,7 @@ unsigned int __stdcall process(void *arglist)
         printf("IP %s: Thread Nr. %d: Task Nr.: %d\n", inet_ntoa(connections[curThread].client[task].sin_addr), curThread,task);
         char request[2048];
         if(recv(connections[curThread].connec[task], request, 2048, 0) <= 0){
-            printf("Bad Request\n");
+            printf("Connection Broke.\n");
             if(closesocket(connections[curThread].connec[task]) != 0){
                 printf("Err closing %d socket: %d", curThread, WSAGetLastError());
             }
@@ -256,7 +257,6 @@ int main()
     serverAddr.sin_port = htons(port);
     serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    
     if(bind(listen_sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR){
         printf("Err binding the socket: %d\n", WSAGetLastError());
         main();
@@ -272,6 +272,7 @@ int main()
     int retryS = 0;
     int retryT = 0;
 
+    int argList[number_connection - 1];
     for(int curThread = 0; curThread < (number_connection - 1); curThread++){ //initialize the Threads
         if(memset(connections[curThread].connec, '\0', sizeof(SOCKET) * 10) == NULL){
             if(retryS < 2){
@@ -286,7 +287,8 @@ int main()
         }
 
         connections[curThread].port = 0;
-        connections[curThread].Thread = (HANDLE)_beginthreadex(NULL, 0, process, (void *)curThread, 0,  &threadID);
+        argList[curThread] = curThread;
+        connections[curThread].Thread = (HANDLE)_beginthreadex(NULL, 0, process, (void *)&argList[curThread], 0,  &threadID);
 
         if(connections[curThread].Thread == 0){
             if(retryT < 2){
