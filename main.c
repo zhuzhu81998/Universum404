@@ -11,7 +11,8 @@
 
 
 #define number_connection 101 //1 bigger than actual
-const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite\\";
+const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite";
+const char *INDEX = "index.html";
 
 struct connection
 {
@@ -41,6 +42,56 @@ struct connection connections[number_connection - 1];
 
 void CALLBACK APCf(ULONG_PTR param){}
 
+int readHeader(char *reqHeader, struct requestH *reqH)
+{
+    char *line = NULL;
+    char *next_line = NULL;
+
+    //memset(line, NULL, 50);
+    char *word = NULL;
+    char *next_word = NULL;
+
+    int i = 1;
+    line = strtok_s(reqHeader, "\r\n", &next_line);
+    for(i = 1; line != NULL; i++){
+        if(i == 1){
+            word = strtok_s(line, " ", &next_word);
+            reqH->method = word;
+            for(int j = 1; word != NULL; j++){
+                word = strtok_s(NULL, " ", &next_word);
+                switch(j){
+                    case 1:
+                        reqH->file = word;
+                        break;
+                    case 2:
+                        reqH->protocol = word;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        line = strtok_s(NULL, "\r\n", &next_line);
+    }
+    return 0;
+}
+
+int createURL(char *wURL)
+{
+    if(strcmp("/", wURL) == 0){
+        snprintf(wURL, 25, "\\%s", INDEX);
+    }
+    else{
+        int len = strlen(wURL);
+        for(int i = 0; i < len; i++){
+            if(wURL[i] == '/'){
+                wURL[i] = '\\';
+            }
+        }
+    }
+    return 0;
+}
+
 char *response(int *hSize, struct responseH *resH)
 {
     char *header;
@@ -69,8 +120,9 @@ int addToList(int curThread, SOCKET csock)
     return n;
 }
 
-char *readFile(int *fSize, char *rurl)
+char *readFile(int *fSize, char *rurl, int *err)
 {
+    *err = 0;
     errno_t errc;
 
     FILE *f;
@@ -82,11 +134,10 @@ char *readFile(int *fSize, char *rurl)
     errc = fopen_s(&f, url, "r");
 
     if(f == NULL){
-        printf("Err opening the file: %d\n", errc);
-        fclose(f);
-        free(file);
+        file = NULL;
         free(url);
-        return NULL;
+        *err = 404;
+        return file;
     }
     else{
         fseek(f, 0, SEEK_END);
@@ -97,10 +148,7 @@ char *readFile(int *fSize, char *rurl)
         ZeroMemory(file, *fSize);
         if(file == NULL){
             printf("Err initiating memory for reading files\n");
-            fclose(f);
-            free(file);
-            free(url);
-            return NULL;
+            *err = 1;
         }
         else{
             fread_s((void *)file, *fSize, *fSize, 1, f);
@@ -114,7 +162,6 @@ char *readFile(int *fSize, char *rurl)
 unsigned int __stdcall process(void *arglist)
 {
     int curThread = (int)arglist;
-
     int stoppoint = 0;
 
     SleepEx(INFINITE, TRUE);
@@ -146,9 +193,22 @@ unsigned int __stdcall process(void *arglist)
         }
 
         struct responseH resH;
+        struct requestH reqH;
+
+        readHeader(request, &reqH);     //read the header and put the data into reqH
         
+        createURL(reqH.file);
+
         header = response(&hSize, &resH);
-        file = readFile(&fSize, strdup("index.html"));
+        int errF;
+        file = readFile(&fSize, reqH.file, &errF);
+
+        if(errF == 404){
+            //not_found();
+            printf("file not found\n");
+            continue;
+        }
+
         char *res = (char *)malloc(hSize + fSize + 10);
         ZeroMemory(res, hSize + fSize + 10);
 
