@@ -52,11 +52,6 @@ char *response(int *hSize, struct responseH *resH)
     ZeroMemory(header, *hSize);
     snprintf(header, 1024, "%s %d %s\r\nConnection: keep-alive", resH->protocol, resH->status, resH->res);
 
-    //snprintf(buf, sizeof(buf), "Connection: keep-alive\r\n\r\n");
-    //printf("%s\n", buf);
-
-    //send(connections[curThread].connec[task], buf, sizeof(buf), 0);
-
     return header;
 }
 
@@ -87,7 +82,10 @@ char *readFile(int *fSize, char *rurl)
     errc = fopen_s(&f, url, "r");
 
     if(f == NULL){
-        printf("FAILURE");
+        printf("Err opening the file: %d\n", errc);
+        fclose(f);
+        free(file);
+        free(url);
         return NULL;
     }
     else{
@@ -98,7 +96,11 @@ char *readFile(int *fSize, char *rurl)
         file = (char *)malloc(*fSize);
         ZeroMemory(file, *fSize);
         if(file == NULL){
-            printf("Memory Error");
+            printf("Err initiating memory for reading files\n");
+            fclose(f);
+            free(file);
+            free(url);
+            return NULL;
         }
         else{
             fread_s((void *)file, *fSize, *fSize, 1, f);
@@ -108,31 +110,6 @@ char *readFile(int *fSize, char *rurl)
     free(url);
     return file;
 }
-
-/*int resBody(char *file, char *rurl)
-{
-    char file[1024];
-    if(f == NULL){
-        printf("FAILURE");
-        return 1;
-    }
-    else{
-        fseek(f, 0, SEEK_END);
-        fSize = ftell(f);
-        rewind(f);
-        fgets(file, sizeof(file), f);
-        while(!feof(f)){
-            printf("%s", file);
-            if(send(connections[curThread].connec[task], file, sizeof(file), 0) <= 0){
-                printf("Err: %d", WSAGetLastError());
-                return 1;
-            }
-            fgets(file, sizeof(file), f);
-        }
-    }
-
-    return 0;
-}*/
 
 unsigned int __stdcall process(void *arglist)
 {
@@ -177,7 +154,9 @@ unsigned int __stdcall process(void *arglist)
 
         snprintf(res, hSize + fSize + 10, "%s\r\n\r\n%s", header, file);
 
-        send(connections[curThread].connec[task], res, strlen(res), 0);
+        if(send(connections[curThread].connec[task], res, strlen(res), 0) == SOCKET_ERROR){
+            printf("Err sending msg: %d", WSAGetLastError());
+        }
 
         free(file);
         free(header);
@@ -197,6 +176,7 @@ unsigned int __stdcall process(void *arglist)
 
 int main()
 {
+    system("cls");
     WSADATA wsa;
     if(WSAStartup(MAKEWORD(1, 1), &wsa) != 0){
         return 1;
@@ -215,18 +195,48 @@ int main()
     serverAddr.sin_port = htons(port);
     serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    bind(listen_sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+    
+    if(bind(listen_sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR){
+        printf("Err binding the socket: %d\n", WSAGetLastError());
+        main();
+    }
 
-    listen(listen_sock, 5);
+    if(listen(listen_sock, 5) == SOCKET_ERROR){
+        printf("Err setting listen socket: %d\n", WSAGetLastError());
+        main();
+    }
 
     unsigned int threadID;
     int len = sizeof(SOCKADDR);
+    int retryS = 0;
+    int retryT = 0;
 
     for(int curThread = 0; curThread < (number_connection - 1); curThread++){ //initialize the Threads
-        memset(connections[curThread].connec, '\0', sizeof(SOCKET) * 10);
-        //connections[curThread].Thread = NULL;
+        if(memset(connections[curThread].connec, '\0', sizeof(SOCKET) * 10) == NULL){
+            if(retryS < 2){
+                printf("Err initiating sockets\n");
+                curThread--;
+                retryS++;
+                continue;
+            }
+            else{
+                main();
+            }
+        }
+
         connections[curThread].port = 0;
         connections[curThread].Thread = (HANDLE)_beginthreadex(NULL, 0, process, (void *)curThread, 0,  &threadID);
+
+        if(connections[curThread].Thread == 0){
+            if(retryT < 2){
+                printf("Err starting Nr. %d Thread\n", curThread);
+                curThread--;
+                continue;
+            }
+            else{
+                main();
+            }
+        }
     }
 
     int t = (unsigned)time(NULL);
@@ -237,6 +247,11 @@ int main()
         curThread = (rand() % (number_connection - 1));
 
         csock = accept(listen_sock, (struct sockaddr *)&connections[curThread].client, &len);
+
+        if(csock == INVALID_SOCKET){
+            printf("Err accepting a connection: %d\n", WSAGetLastError());
+            continue;
+        }
     
         if(addToList(curThread, csock) != 0){
             printf("Err assigning a task\n");
