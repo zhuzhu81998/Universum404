@@ -20,7 +20,7 @@ struct connection
     HANDLE Thread;
     IN_ADDR ip;
     int port;
-    struct sockaddr_in client;
+    struct sockaddr_in client[10];
 };
 
 struct requestH
@@ -106,12 +106,13 @@ char *response(int *hSize, struct responseH *resH)
     return header;
 }
 
-int addToList(int curThread, SOCKET csock)
+int addToList(int curThread, SOCKET csock, struct sockaddr_in client)
 {
     int n = 1;
     for(int i = 0; i <= 9; i++){
         if(connections[curThread].connec[i] == '\0'){
             connections[curThread].connec[i] = csock;
+            connections[curThread].client[i] = client;
             n = 0;
             break;
         }
@@ -181,7 +182,7 @@ unsigned int __stdcall process(void *arglist)
             continue;
         }
         stoppoint = task;
-        printf("Thread Nr. %d: Task Nr.: %d\n", curThread,task);
+        printf("IP %s: Thread Nr. %d: Task Nr.: %d\n", inet_ntoa(connections[curThread].client[task].sin_addr), curThread,task);
         char request[2048];
         if(recv(connections[curThread].connec[task], request, 2048, 0) <= 0){
             printf("Bad Request\n");
@@ -302,18 +303,20 @@ int main()
     int t = (unsigned)time(NULL);
     int curThread = 0;
     SOCKET csock;
+    struct sockaddr_in client;
+
     for(int i = 0; ; i++){
         srand(t + i);
         curThread = (rand() % (number_connection - 1));
 
-        csock = accept(listen_sock, (struct sockaddr *)&connections[curThread].client, &len);
+        csock = accept(listen_sock, (struct sockaddr *)&client, &len);
 
         if(csock == INVALID_SOCKET){
             printf("Err accepting a connection: %d\n", WSAGetLastError());
             continue;
         }
     
-        if(addToList(curThread, csock) != 0){
+        if(addToList(curThread, csock, client) != 0){
             printf("Err assigning a task\n");
             continue;
         }
