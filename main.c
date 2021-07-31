@@ -14,6 +14,18 @@
 const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite";
 const char *INDEX = "index.html";
 
+
+void CALLBACK APCf(ULONG_PTR);
+int readHeader(char *, struct requestH *, int *);
+int createURL(char *);
+char *response(int *, int, BOOLEAN *, struct responseH *);
+int addToList(int, SOCKET, SOCKADDR_STORAGE *);
+char *readFile(int *, char *, int *);
+int toIP(SOCKADDR_STORAGE *, char *);
+int endTask(int, int);
+unsigned int __stdcall process(void *);
+
+
 struct connection
 {
     SOCKET connec[10];
@@ -40,12 +52,11 @@ struct connection connections[number_connection];
 
 void CALLBACK APCf(ULONG_PTR param){}
 
-int readHeader(char *reqHeader, struct requestH *reqH)
+int readHeader(char *reqHeader, struct requestH *reqH, int * errC)
 {
     char *line = NULL;
     char *next_line = NULL;
 
-    //memset(line, NULL, 50);
     char *word = NULL;
     char *next_word = NULL;
 
@@ -61,9 +72,11 @@ int readHeader(char *reqHeader, struct requestH *reqH)
                     case 1:
                         reqH->file = word;
                         break;
+
                     case 2:
                         reqH->protocol = word;
                         break;
+
                     default:
                         break;
                 }
@@ -71,11 +84,17 @@ int readHeader(char *reqHeader, struct requestH *reqH)
         }
         line = strtok_s(NULL, "\r\n", &next_line);
     }
+    if(reqH->file == NULL || reqH->protocol == NULL || reqH->method == NULL){
+        *errC = 400;
+    }
     return 0;
 }
 
 int createURL(char *wURL)
 {
+    if(wURL == NULL){
+        return 1;
+    }
     if(strcmp("/", wURL) == 0){
         snprintf(wURL, 25, "\\%s", INDEX);
     }
@@ -90,12 +109,36 @@ int createURL(char *wURL)
     return 0;
 }
 
-char *response(int *hSize, struct responseH *resH)
+char *response(int *hSize, int errC, BOOLEAN *bodyN, struct responseH *resH)
 {
     char *header;
     *hSize = 1024;
-    resH->status = 200;
-    resH->res = "OK";
+    
+    resH->status = errC;
+
+    switch(errC){
+        case 200:
+            resH->res = "OK";
+            *bodyN = TRUE;
+            break;
+        
+        case 400:
+            resH->res = "Bad Request";
+            *bodyN = FALSE;
+            break;
+
+        case 404:
+            resH->res = "Not Found";
+            *bodyN = FALSE;
+            break;
+        
+        default:
+            resH->status = 500;
+            *bodyN = FALSE;
+            resH->res = "Internal Server Error";
+            break;
+    }
+
     resH->protocol = "HTTP/1.1";
     header = (char *)malloc(*hSize);
     ZeroMemory(header, *hSize);
@@ -119,9 +162,8 @@ int addToList(int curThread, SOCKET csock, SOCKADDR_STORAGE *client)
     return n;
 }
 
-char *readFile(int *fSize, char *rurl, int *err)
+char *readFile(int *fSize, char *rurl, int *errC)
 {
-    *err = 0;
     errno_t errc;
 
     FILE *f;
@@ -135,7 +177,7 @@ char *readFile(int *fSize, char *rurl, int *err)
     if(f == NULL){
         file = NULL;
         free(url);
-        *err = 404;
+        *errC = 404;
         return file;
     }
     else{
@@ -147,7 +189,7 @@ char *readFile(int *fSize, char *rurl, int *err)
         ZeroMemory(file, *fSize);
         if(file == NULL){
             printf("Err initiating memory for reading files\n");
-            *err = 1;
+            *errC = 500;
         }
         else{
             fread_s((void *)file, *fSize, *fSize, 1, f);
@@ -166,13 +208,26 @@ int toIP(SOCKADDR_STORAGE *storage, char *ip)
             SOCKADDR_IN client = *(struct sockaddr_in *)storage;
             inet_ntop(AF_INET, &(client.sin_addr), ip, 50);
             break;
+
         case AF_INET6:
             SOCKADDR_IN6 client6 = *(struct sockaddr_in6 *)storage;
             inet_ntop(AF_INET6, &(client6.sin6_addr), ip, 50);
             break;
+
         default:
             return 1;
     }
+    return 0;
+}
+
+int endTask(int curThread, int task)
+{
+    if(closesocket(connections[curThread].connec[task]) != 0){
+            printf("Err closing %d socket: %d", curThread, WSAGetLastError());
+            return 1;
+    }
+    connections[curThread].connec[task] = '\0';
+
     return 0;
 }
 
@@ -180,12 +235,20 @@ unsigned int __stdcall process(void *arglist)
 {
     int curThread = *(int *)arglist;
     int stoppoint = 0;
-
-    SleepEx(INFINITE, TRUE);
     int fSize = 0;
     int hSize = 0;
+    int errC = 200;
+
+    BOOLEAN bodyN = TRUE;
+
     char *header = NULL;
     char *file = NULL;
+    char ip[50];
+    char date[9];
+    char time[9];
+    char request[2048];
+
+    SleepEx(INFINITE, TRUE);
 
     for(int task = 0; ; task++){
         if(task > 9){
@@ -199,40 +262,37 @@ unsigned int __stdcall process(void *arglist)
         }
         stoppoint = task;
 
-        char ip[50];
         toIP(connections[curThread].client[task], ip);
 
-        char date[9];
-        char time[9];
         _tzset();
         _strdate_s(date, 9);
         _strtime_s(time, 9);
 
-        printf("%s %s: %s : %d : %d :\n", date, time, ip, curThread, task);
-        char request[2048];
-        if(recv(connections[curThread].connec[task], request, 2048, 0) <= 0){
+        printf("%s %s | %s | %d | %d |\n", date, time, ip, curThread, task);
+        ZeroMemory(request, sizeof(request));
+        if(recv(connections[curThread].connec[task], request, sizeof(request), 0) <= 0){
             printf("Connection Broke.\n");
-            if(closesocket(connections[curThread].connec[task]) != 0){
-                printf("Err closing %d socket: %d", curThread, WSAGetLastError());
+            if(endTask(curThread, task) != 0){
+                printf("Err closing %d task of %d Thread: %d\n", task, curThread, WSAGetLastError());
             }
-            connections[curThread].connec[task] = '\0';
             continue;
         }
 
         struct responseH resH;
         struct requestH reqH;
 
-        readHeader(request, &reqH);     //read the header and put the data into reqH
-        createURL(reqH.file);
+        readHeader(request, &reqH, &errC);     //red the header and put athe data into reqH
+        if(errC != 400){
+            createURL(reqH.file);
+            file = readFile(&fSize, reqH.file, &errC);
+        }
+        header = response(&hSize, errC, &bodyN, &resH);
 
-        header = response(&hSize, &resH);
-        int errF;
-        file = readFile(&fSize, reqH.file, &errF);
-
-        if(errF == 404){
-            //not_found();
-            printf("file not found\n");
-            continue;
+        if(bodyN == FALSE){
+            if(file != NULL){
+                free(file);
+            }
+            file = "";
         }
 
         char *res = (char *)malloc(hSize + fSize + 10);
@@ -244,18 +304,24 @@ unsigned int __stdcall process(void *arglist)
             printf("Err sending msg: %d", WSAGetLastError());
         }
 
-        free(file);
-        free(header);
-
-        if(closesocket(connections[curThread].connec[task]) != 0){
-            printf("Err closing %d socket: %d", curThread, WSAGetLastError());
+        if(file != NULL){
+            if(strlen(file) != 0){
+                free(file);
+            }
         }
-        connections[curThread].connec[task] = '\0';
+        
+        free(header);
+        free(res);
+
+        if(endTask(curThread, task) != 0){
+            printf("Err closing %d task of %d Thread: %d\n", task, curThread, WSAGetLastError());
+        }
     }
 
     if(CloseHandle(connections[curThread].Thread) == FALSE){
         printf("Err closing %d thread: %d", curThread, GetLastError());
     }
+
     _endthreadex(0);
     return 0;
 }
@@ -354,7 +420,6 @@ int main()
     }
 
     closesocket(listen_sock6);
-
     for(int i = 0; i < number_connection; i++){
         CloseHandle(connections[i].Thread);
         for(int j = 0; j <= 9; j++){
