@@ -223,7 +223,6 @@ int toIP(SOCKADDR_STORAGE *storage, char *ip)
 int endTask(int curThread, int task)
 {
     if(closesocket(connections[curThread].connec[task]) != 0){
-            printf("Err closing %d socket: %d", curThread, WSAGetLastError());
             return 1;
     }
     connections[curThread].connec[task] = '\0';
@@ -270,6 +269,16 @@ unsigned int __stdcall process(void *arglist)
 
         printf("%s %s | %s | %d | %d |\n", date, time, ip, curThread, task);
         ZeroMemory(request, sizeof(request));
+
+        //set timeout for recv
+        DWORD timeout = 4500;
+        if(setsockopt(connections[curThread].connec[task], SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(DWORD)) != 0 ){
+            printf("Err setting timeout: %d\n", WSAGetLastError());
+            if(endTask(curThread, task) != 0){
+                printf("Err closing %d task of %d Thread: %d\n", task, curThread, WSAGetLastError());
+            }
+        }
+
         if(recv(connections[curThread].connec[task], request, sizeof(request), 0) <= 0){
             printf("Connection Broke.\n");
             if(endTask(curThread, task) != 0){
@@ -301,7 +310,7 @@ unsigned int __stdcall process(void *arglist)
         snprintf(res, hSize + fSize + 10, "%s\r\n\r\n%s", header, file);
 
         if(send(connections[curThread].connec[task], res, strlen(res), 0) == SOCKET_ERROR){
-            printf("Err sending msg: %d", WSAGetLastError());
+            printf("Err sending msg: %d\n", WSAGetLastError());
         }
 
         if(file != NULL){
@@ -319,7 +328,7 @@ unsigned int __stdcall process(void *arglist)
     }
 
     if(CloseHandle(connections[curThread].Thread) == FALSE){
-        printf("Err closing %d thread: %d", curThread, GetLastError());
+        printf("Err closing %d thread: %d\n", curThread, GetLastError());
     }
 
     _endthreadex(0);
