@@ -10,7 +10,7 @@
 #include <time.h>
 
 
-#define number_connection 101 //1 bigger than actual
+#define number_connection 100
 const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite";
 const char *INDEX = "index.html";
 
@@ -18,9 +18,7 @@ struct connection
 {
     SOCKET connec[10];
     HANDLE Thread;
-    IN_ADDR ip;
-    int port;
-    struct sockaddr_in client[10];
+    SOCKADDR_STORAGE *client[10];
 };
 
 struct requestH
@@ -38,7 +36,7 @@ struct responseH
     char *res;
 };
 
-struct connection connections[number_connection - 1];
+struct connection connections[number_connection];
 
 void CALLBACK APCf(ULONG_PTR param){}
 
@@ -106,7 +104,7 @@ char *response(int *hSize, struct responseH *resH)
     return header;
 }
 
-int addToList(int curThread, SOCKET csock, struct sockaddr_in client)
+int addToList(int curThread, SOCKET csock, SOCKADDR_STORAGE *client)
 {
     int n = 1;
     for(int i = 0; i <= 9; i++){
@@ -160,10 +158,27 @@ char *readFile(int *fSize, char *rurl, int *err)
     return file;
 }
 
+int toIP(SOCKADDR_STORAGE *storage, char *ip)
+{
+    ZeroMemory(ip, 50);
+    switch(storage->ss_family){
+        case AF_INET:
+            SOCKADDR_IN client = *(struct sockaddr_in *)storage;
+            inet_ntop(AF_INET, &(client.sin_addr), ip, 50);
+            break;
+        case AF_INET6:
+            SOCKADDR_IN6 client6 = *(struct sockaddr_in6 *)storage;
+            inet_ntop(AF_INET6, &(client6.sin6_addr), ip, 50);
+            break;
+        default:
+            return 1;
+    }
+    return 0;
+}
+
 unsigned int __stdcall process(void *arglist)
 {
     int curThread = *(int *)arglist;
-    printf("%d\n", curThread);
     int stoppoint = 0;
 
     SleepEx(INFINITE, TRUE);
@@ -183,7 +198,17 @@ unsigned int __stdcall process(void *arglist)
             continue;
         }
         stoppoint = task;
-        printf("IP %s: Thread Nr. %d: Task Nr.: %d\n", inet_ntoa(connections[curThread].client[task].sin_addr), curThread,task);
+
+        char ip[50];
+        toIP(connections[curThread].client[task], ip);
+
+        char date[9];
+        char time[9];
+        _tzset();
+        _strdate_s(date, 9);
+        _strtime_s(time, 9);
+
+        printf("%s %s: %s : %d : %d :\n", date, time, ip, curThread, task);
         char request[2048];
         if(recv(connections[curThread].connec[task], request, 2048, 0) <= 0){
             printf("Connection Broke.\n");
@@ -198,7 +223,6 @@ unsigned int __stdcall process(void *arglist)
         struct requestH reqH;
 
         readHeader(request, &reqH);     //read the header and put the data into reqH
-        
         createURL(reqH.file);
 
         header = response(&hSize, &resH);
@@ -243,37 +267,41 @@ int main()
     if(WSAStartup(MAKEWORD(1, 1), &wsa) != 0){
         return 1;
     }
-    SOCKET listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+    SOCKET listen_sock6 = socket(AF_INET6, SOCK_STREAM, 0);
 
-    SOCKADDR_IN serverAddr;
+    int optVal = 0;
+    int optlen = sizeof(int);
+    setsockopt(listen_sock6, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&optVal, optlen);
 
-    ZeroMemory(&serverAddr, sizeof(serverAddr));
+    SOCKADDR_IN6 serverAddr6;
+
+    ZeroMemory(&serverAddr6, sizeof(serverAddr6));
 
     int port = 0;
     printf("Please enter the port:\n");
     scanf_s("%d", &port);
 
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serverAddr6.sin6_family = AF_INET6;
+    serverAddr6.sin6_port = htons(port);
+    serverAddr6.sin6_addr = in6addr_any;
 
-    if(bind(listen_sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR){
+    if(bind(listen_sock6, (struct sockaddr *)&serverAddr6, sizeof(serverAddr6)) == SOCKET_ERROR){
         printf("Err binding the socket: %d\n", WSAGetLastError());
         main();
     }
 
-    if(listen(listen_sock, 5) == SOCKET_ERROR){
+    if(listen(listen_sock6, SOMAXCONN) == SOCKET_ERROR){
         printf("Err setting listen socket: %d\n", WSAGetLastError());
         main();
     }
 
     unsigned int threadID;
-    int len = sizeof(SOCKADDR);
+
     int retryS = 0;
     int retryT = 0;
 
-    int argList[number_connection - 1];
-    for(int curThread = 0; curThread < (number_connection - 1); curThread++){ //initialize the Threads
+    int argList[number_connection];
+    for(int curThread = 0; curThread < number_connection; curThread++){ //initialize the Threads
         if(memset(connections[curThread].connec, '\0', sizeof(SOCKET) * 10) == NULL){
             if(retryS < 2){
                 printf("Err initiating sockets\n");
@@ -286,7 +314,6 @@ int main()
             }
         }
 
-        connections[curThread].port = 0;
         argList[curThread] = curThread;
         connections[curThread].Thread = (HANDLE)_beginthreadex(NULL, 0, process, (void *)&argList[curThread], 0,  &threadID);
 
@@ -305,27 +332,30 @@ int main()
     int t = (unsigned)time(NULL);
     int curThread = 0;
     SOCKET csock;
-    struct sockaddr_in client;
+    SOCKADDR_STORAGE client;
+
+    int len = sizeof(SOCKADDR_STORAGE);
 
     for(int i = 0; ; i++){
         srand(t + i);
-        curThread = (rand() % (number_connection - 1));
+        curThread = (rand() % number_connection);
 
-        csock = accept(listen_sock, (struct sockaddr *)&client, &len);
+        csock = accept(listen_sock6, (struct sockaddr *)&client, &len);
 
         if(csock == INVALID_SOCKET){
             printf("Err accepting a connection: %d\n", WSAGetLastError());
             continue;
         }
     
-        if(addToList(curThread, csock, client) != 0){
+        if(addToList(curThread, csock, &client) != 0){
             printf("Err assigning a task\n");
             continue;
         }
     }
 
-    closesocket(listen_sock);
-    for(int i = 0; i < (number_connection - 1); i++){
+    closesocket(listen_sock6);
+
+    for(int i = 0; i < number_connection; i++){
         CloseHandle(connections[i].Thread);
         for(int j = 0; j <= 9; j++){
             closesocket(connections[i].connec[j]);
