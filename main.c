@@ -16,11 +16,12 @@ const char *INDEX = "index.html";
 
 
 void CALLBACK APCf(ULONG_PTR);
+int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2);
 int readHeader(char *, struct requestH *, int *);
 int createURL(char *);
-char *response(int *, int, BOOLEAN *, struct responseH *);
+int response(char **header, int *hSize, int errC, BOOLEAN *bodyN, struct responseH *resH);
 int addToList(int, SOCKET, SOCKADDR_STORAGE *);
-char *readFile(int *, char *, int *);
+int readFile(char **file, long *fSize, char *rurl, int *errC);
 int toIP(SOCKADDR_STORAGE *, char *);
 int endTask(int, int);
 unsigned int __stdcall process(void *);
@@ -46,11 +47,34 @@ struct responseH
     char *protocol;
     int status;
     char *res;
+    long fSize;
+    char *fType;
 };
 
 struct connection connections[number_connection];
 
 void CALLBACK APCf(ULONG_PTR param){}
+
+int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2)
+{
+    if(str1 == NULL || str2 == NULL){
+        printf("Err wrong pointer\n");
+        return 1;
+    }
+    *buf = (char *)malloc(len1 + len2);
+    if(*buf == NULL){
+        printf("Err initiating memory for reading files\n");
+    }
+    ZeroMemory(*buf, len1 + len2);
+    int i = 0, j = 0;
+    for(i = 0; i < len1; i++){
+        (*buf)[i] = str1[i];
+    }
+    for(j = 0; j < len2; j++){
+        (*buf)[i + j] = str2[j];
+    }
+    return 0;
+}
 
 int readHeader(char *reqHeader, struct requestH *reqH, int * errC)
 {
@@ -109,10 +133,10 @@ int createURL(char *wURL)
     return 0;
 }
 
-char *response(int *hSize, int errC, BOOLEAN *bodyN, struct responseH *resH)
+int response(char **header, int *hSize, int errC, BOOLEAN *bodyN, struct responseH *resH)
 {
-    char *header;
     *hSize = 1024;
+    int len = 0;
     
     resH->status = errC;
 
@@ -140,11 +164,21 @@ char *response(int *hSize, int errC, BOOLEAN *bodyN, struct responseH *resH)
     }
 
     resH->protocol = "HTTP/1.1";
-    header = (char *)malloc(*hSize);
-    ZeroMemory(header, *hSize);
-    snprintf(header, 1024, "%s %d %s\r\nConnection: keep-alive", resH->protocol, resH->status, resH->res);
+    *header = (char *)malloc(*hSize);
+    ZeroMemory(*header, *hSize);
+    if(header == NULL){
+        printf("Err initiating memory\n");
+        resH->status = 500;
+        return 1;
+    }
+    len = snprintf(*header, *hSize, "%s %d %s\r\nAccept-Ranges: bytes\r\n", resH->protocol, resH->status, resH->res);
+    if(resH->fSize != 0){
+        len = snprintf(*header, *hSize, "%sContent-Length: %ld\r\n", *header, resH->fSize);
+    }
+    len = snprintf(*header, *hSize, "%s\r\n", *header);
 
-    return header;
+    *hSize = len;
+    return 0;
 }
 
 int addToList(int curThread, SOCKET csock, SOCKADDR_STORAGE *client)
@@ -162,42 +196,41 @@ int addToList(int curThread, SOCKET csock, SOCKADDR_STORAGE *client)
     return n;
 }
 
-char *readFile(int *fSize, char *rurl, int *errC)
+int readFile(char **file, long *fSize, char *rurl, int *errC)
 {
     errno_t errc;
 
     FILE *f;
     char *url = (char *)malloc(200);
-    char *file = NULL;
 
-    int test = snprintf(url, 200,"%s%s", DIR, rurl);
-
-    errc = fopen_s(&f, url, "r");
+    int test = snprintf(url, 200, "%s%s", DIR, rurl);
+    errc = fopen_s(&f, url, "rb");
 
     if(f == NULL){
-        file = NULL;
+        *file = NULL;
         free(url);
         *errC = 404;
-        return file;
+        return 1;
     }
     else{
         fseek(f, 0, SEEK_END);
         *fSize = ftell(f);
-        rewind(f);
+        fseek(f, 0, SEEK_SET);
 
-        file = (char *)malloc(*fSize);
-        ZeroMemory(file, *fSize);
-        if(file == NULL){
+        *file = (char *)malloc(*fSize);
+        ZeroMemory(*file, *fSize);
+        if(*file == NULL){
             printf("Err initiating memory for reading files\n");
             *errC = 500;
         }
         else{
-            fread_s((void *)file, *fSize, *fSize, 1, f);
+            int check = 0;
+            check = fread_s((void *)*file, *fSize, *fSize, 1, f);
         }
     }
     fclose(f);
     free(url);
-    return file;
+    return 0;
 }
 
 int toIP(SOCKADDR_STORAGE *storage, char *ip)
@@ -234,7 +267,7 @@ unsigned int __stdcall process(void *arglist)
 {
     int curThread = *(int *)arglist;
     int stoppoint = 0;
-    int fSize = 0;
+    long fSize = 0;
     int hSize = 0;
     int errC = 200;
 
@@ -290,31 +323,34 @@ unsigned int __stdcall process(void *arglist)
         struct responseH resH;
         struct requestH reqH;
 
-        readHeader(request, &reqH, &errC);     //red the header and put athe data into reqH
-        if(errC != 400){
+        resH.fSize = 0;
+        resH.protocol = "HTTP/1.1";
+        resH.status = -1;
+        resH.res = NULL;
+
+        readHeader(request, &reqH, &errC);     //read the header and put the data into reqH
+        if(errC != 400 && bodyN == TRUE){
             createURL(reqH.file);
-            file = readFile(&fSize, reqH.file, &errC);
+            //resH.fType = "image/jpeg";
+            readFile(&file, &fSize, reqH.file, &errC);
+            resH.fSize = fSize;
         }
-        header = response(&hSize, errC, &bodyN, &resH);
-
-        if(bodyN == FALSE){
-            if(file != NULL){
-                free(file);
-            }
+        if(errC == 404 || bodyN == FALSE){
             file = "";
+            fSize = 0;
         }
 
-        char *res = (char *)malloc(hSize + fSize + 10);
-        ZeroMemory(res, hSize + fSize + 10);
+        response(&header, &hSize, errC, &bodyN, &resH);
+        char *res = NULL;
+        binsprintf(&res, header, hSize, file, fSize);
 
-        snprintf(res, hSize + fSize + 10, "%s\r\n\r\n%s", header, file);
-
-        if(send(connections[curThread].connec[task], res, strlen(res), 0) == SOCKET_ERROR){
+        int byteS = send(connections[curThread].connec[task], res, hSize + fSize, 0);
+        if(byteS == SOCKET_ERROR){
             printf("Err sending msg: %d\n", WSAGetLastError());
         }
 
         if(file != NULL){
-            if(strlen(file) != 0){
+            if(fSize != 0){
                 free(file);
             }
         }
@@ -371,7 +407,6 @@ int main()
     }
 
     unsigned int threadID;
-
     int retryS = 0;
     int retryT = 0;
 
