@@ -7,3 +7,4 @@
 build
 actions-runner
 test.c
+*.jpg
