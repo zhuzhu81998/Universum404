@@ -4,6 +4,7 @@
 #include <Windows.h>
 #include <process.h>
 #include <math.h>
+#include <time.h>
 
 #define numberC 30
 
@@ -27,6 +28,7 @@ unsigned int __stdcall count(void *arglist)
     while(TRUE){
         last_total = total;
         total = 0;
+
         Sleep(1000);
         sec++;
         for(int i = 0; i < numberC; i++){
@@ -41,7 +43,8 @@ unsigned int __stdcall process(void *arglist)
     int curThread = (int)arglist;
 
     char buf[2048];
-    int i = 0;
+    unsigned int i = 0;
+    int t = (unsigned)time(NULL);
     while(TRUE){
         //client_sock[curThread] = socket(AF_INET, SOCK_STREAM, 0);
         client_sock[curThread] = socket(AF_INET, SOCK_STREAM, 0);
@@ -57,7 +60,8 @@ unsigned int __stdcall process(void *arglist)
         else{
             printf("Err: %d\n", WSAGetLastError());
         }
-        Sleep(100);
+        srand(t +  i);
+        Sleep(rand() % 11);
         i++;
     }
     _endthreadex(0);
