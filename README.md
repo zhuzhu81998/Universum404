@@ -6,7 +6,7 @@
  2. ~~finish the basic function of a html server~~
  3. ~~add ipv6 support~~
  4. ~~add connections timeout~~
- 5. add image support
+ 5. ~~add image support~~
  6. add ssl support
  7. add php support
 
