@@ -11,20 +11,31 @@
 
 
 #define number_connection 100
+//#define number_process 10
+#define max_request_header_size 8000 //in bytes
+
+const char *protocol = "HTTP/1.1";
+const char *doc400 = NULL;  //this file names must begin with "\\"
+const char *doc404 = NULL;
+const char *doc413 = NULL;
+const char *doc500 = NULL;
 const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite";
 const char *INDEX = "index.html";
 
 
 void CALLBACK APCf(ULONG_PTR);
 int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2);
-int readHeader(char *, struct requestH *, int *);
+int readHeader(char *reqHeader, struct requestH *reqH, struct response *res);
 int createURL(char *);
-int response(char **header, int *hSize, int errC, BOOLEAN *bodyN, struct responseH *resH);
+int response(struct response *res);
 int addToList(int, SOCKET, SOCKADDR_STORAGE *);
-int readFile(char **file, long *fSize, char *rurl, int *errC);
+int readFile(struct response *res, char *rurl);
 int toIP(SOCKADDR_STORAGE *, char *);
 int endTask(int, int);
-unsigned int __stdcall process(void *);
+int fileForErr(struct response *res);
+int resErr(struct response *res);
+int sendRes(struct response res);
+unsigned int __stdcall Thread(void *);
 
 
 struct connection
@@ -42,13 +53,18 @@ struct requestH
     char *Host;
 };
 
-struct responseH
+struct response
 {
     char *protocol;
     int status;
     char *res;
-    long fSize;
+    long long fSize;
     char *fType;
+    char *body;
+    char *header;
+    int hSize;
+    SOCKET sock;
+    BOOLEAN bodyN;  //denote whether a real body is required
 };
 
 struct connection connections[number_connection];
@@ -58,12 +74,13 @@ void CALLBACK APCf(ULONG_PTR param){}
 int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2)
 {
     if(str1 == NULL || str2 == NULL){
-        printf("Err wrong pointer\n");
-        return 1;
+        printf("Err wrong pointer: \"%s\" and \"%s\"\n", str1, str2);
+        return 500;
     }
     *buf = (char *)malloc(len1 + len2);
     if(*buf == NULL){
         printf("Err initiating memory for reading files\n");
+        return 500;
     }
     ZeroMemory(*buf, len1 + len2);
     int i = 0, j = 0;
@@ -76,7 +93,7 @@ int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2)
     return 0;
 }
 
-int readHeader(char *reqHeader, struct requestH *reqH, int * errC)
+int readHeader(char *reqHeader, struct requestH *reqH, struct response *res)
 {
     char *line = NULL;
     char *next_line = NULL;
@@ -109,7 +126,9 @@ int readHeader(char *reqHeader, struct requestH *reqH, int * errC)
         line = strtok_s(NULL, "\r\n", &next_line);
     }
     if(reqH->file == NULL || reqH->protocol == NULL || reqH->method == NULL){
-        *errC = 400;
+        res->status = 400;
+        resErr(res);
+        return 400;
     }
     return 0;
 }
@@ -133,51 +152,49 @@ int createURL(char *wURL)
     return 0;
 }
 
-int response(char **header, int *hSize, int errC, BOOLEAN *bodyN, struct responseH *resH)
+int response(struct response *res)
 {
-    *hSize = 1024;
+    res->hSize = 1024;
     int len = 0;
-    
-    resH->status = errC;
 
-    switch(errC){
+    switch(res->status){
         case 200:
-            resH->res = "OK";
-            *bodyN = TRUE;
+            res->res = "OK";
+            res->bodyN = TRUE;
             break;
         
         case 400:
-            resH->res = "Bad Request";
-            *bodyN = FALSE;
+            res->res = "Bad Request";
+            res->bodyN = FALSE;
             break;
 
         case 404:
-            resH->res = "Not Found";
-            *bodyN = FALSE;
+            res->res = "Not Found";
+            res->bodyN = FALSE;
             break;
         
         default:
-            resH->status = 500;
-            *bodyN = FALSE;
-            resH->res = "Internal Server Error";
+            res->status = 500;
+            res->res = "Internal Server Error";
+            res->bodyN = FALSE;
             break;
     }
 
-    resH->protocol = "HTTP/1.1";
-    *header = (char *)malloc(*hSize);
-    ZeroMemory(*header, *hSize);
-    if(header == NULL){
+    res->protocol = _strdup(protocol);
+    res->header = (char *)malloc(res->hSize);
+    ZeroMemory(res->header, res->hSize);
+    if(res->header == NULL){
         printf("Err initiating memory\n");
-        resH->status = 500;
-        return 1;
+        res->status = 500;
+        return 500;
     }
-    len = snprintf(*header, *hSize, "%s %d %s\r\nAccept-Ranges: bytes\r\n", resH->protocol, resH->status, resH->res);
-    if(resH->fSize != 0){
-        len = snprintf(*header, *hSize, "%sContent-Length: %ld\r\n", *header, resH->fSize);
+    len = snprintf(res->header, res->hSize, "%s %d %s\r\nAccept-Ranges: bytes\r\n", res->protocol, res->status, res->res);
+    if(res->fSize != 0){
+        len = snprintf(res->header, res->hSize, "%sContent-Length: %lld\r\n", res->header, res->fSize);
     }
-    len = snprintf(*header, *hSize, "%s\r\n", *header);
+    len = snprintf(res->header, res->hSize, "%s\r\n", res->header);
 
-    *hSize = len;
+    res->hSize = len;
     return 0;
 }
 
@@ -196,36 +213,39 @@ int addToList(int curThread, SOCKET csock, SOCKADDR_STORAGE *client)
     return n;
 }
 
-int readFile(char **file, long *fSize, char *rurl, int *errC)
+int readFile(struct response *res, char *rurl)
 {
-    errno_t errc;
-
     FILE *f;
-    char *url = (char *)malloc(200);
+    size_t urllen = strlen(DIR) + strlen(rurl);
+    char *url = (char *)malloc(urllen + 1);
+    ZeroMemory(url, urllen + 1);
 
-    int test = snprintf(url, 200, "%s%s", DIR, rurl);
-    errc = fopen_s(&f, url, "rb");
+    int test = snprintf(url, urllen + 1, "%s%s", DIR, rurl);
+
+    fopen_s(&f, url, "rb");
 
     if(f == NULL){
-        *file = NULL;
         free(url);
-        *errC = 404;
-        return 1;
+        res->status = 404;
+        resErr(res);
+        return 404;
     }
     else{
-        fseek(f, 0, SEEK_END);
-        *fSize = ftell(f);
-        fseek(f, 0, SEEK_SET);
+        _fseeki64(f, 0, SEEK_END);
+        res->fSize = _ftelli64(f);
+        _fseeki64(f, 0, SEEK_SET);
 
-        *file = (char *)malloc(*fSize);
-        ZeroMemory(*file, *fSize);
-        if(*file == NULL){
+        res->body = (char *)malloc(res->fSize);
+        ZeroMemory(res->body, res->fSize);
+        if(res->body == NULL){
             printf("Err initiating memory for reading files\n");
-            *errC = 500;
+            res->status = 500;
+            resErr(res);
+            return 500;
         }
         else{
             int check = 0;
-            check = fread_s((void *)*file, *fSize, *fSize, 1, f);
+            check = fread_s((void *)res->body, res->fSize, res->fSize, 1, f);
         }
     }
     fclose(f);
@@ -263,22 +283,123 @@ int endTask(int curThread, int task)
     return 0;
 }
 
-unsigned int __stdcall process(void *arglist)
+int fileForErr(struct response *res)
+{
+    switch(res->status){
+        case 400:
+            if(doc400 != NULL){
+                readFile(res, _strdup(doc400));
+            }
+            else{
+                res->body = "";
+                res->fSize = 0;
+            }
+            break;
+
+        case 404:
+            if(doc404 != NULL){
+                readFile(res, _strdup(doc404));
+            }
+            else{
+                res->body = "";
+                res->fSize = 0;
+            }
+            break;
+
+        case 413:
+            if(doc413 != NULL){
+                readFile(res, _strdup(doc413));
+            }
+            else{
+                res->body = "";
+                res->fSize = 0;
+            }
+            break;
+
+        case 500:
+            if(doc500 != NULL){
+                readFile(res, _strdup(doc500));
+            }
+            else{
+                res->body = "";
+                res->fSize = 0;
+            }
+            break;
+        
+        default:
+            if(doc500 != NULL){
+                readFile(res, _strdup(doc500));
+            }
+            else{
+                res->body = "";
+                res->fSize = 0;
+            }
+            break;
+    }
+    return 0;
+}
+
+int resErr(struct response *res)
+{
+    switch(res->status){
+        case 400:
+            res->res = "Bad Request";
+            res->bodyN = FALSE;
+            break;
+
+        case 404:
+            res->res = "Not Found";
+            res->bodyN = FALSE;
+            break;
+
+        case 413:
+            res->res = "Request Entity Too Large";
+            res->bodyN = FALSE;
+        
+        default:
+            res->status = 500;
+            res->res = "Internal Server Error";
+            res->bodyN = FALSE;
+            break;
+    }
+    fileForErr(res);
+    return 0;
+}
+
+int sendRes(struct response res)
+{
+    char *resMsg = NULL;
+    binsprintf(&resMsg, res.header, res.hSize, res.body, res.fSize);
+
+    int byteS = send(res.sock, resMsg, res.hSize + res.fSize, 0);
+    if(byteS == SOCKET_ERROR){
+        printf("Err sending msg: %d\n", WSAGetLastError());
+    }
+
+    if(res.body != NULL){
+        if(res.fSize != 0){
+            free(res.body);
+        }
+    }
+    free(res.header);
+    free(resMsg);
+    return 0;
+}
+
+unsigned int __stdcall Thread(void *arglist)
 {
     int curThread = *(int *)arglist;
     int stoppoint = 0;
-    long fSize = 0;
-    int hSize = 0;
-    int errC = 200;
 
-    BOOLEAN bodyN = TRUE;
+    struct response res;
+    struct requestH reqH;
 
-    char *header = NULL;
+    //char *header = NULL;
     char *file = NULL;
     char ip[50];
     char date[9];
     char time[9];
-    char request[2048];
+    char request[max_request_header_size];
 
     SleepEx(INFINITE, TRUE);
 
@@ -293,6 +414,16 @@ unsigned int __stdcall process(void *arglist)
             continue;
         }
         stoppoint = task;
+
+        res.fSize = 0;
+        res.protocol = _strdup(protocol);
+        res.status = 200;
+        res.res = NULL;
+        res.body = NULL;
+        res.header = NULL;
+        res.hSize = 0;
+        res.sock = connections[curThread].connec[task];
+        res.bodyN = TRUE;
 
         toIP(connections[curThread].client[task], ip);
 
@@ -312,51 +443,38 @@ unsigned int __stdcall process(void *arglist)
             }
         }
 
-        if(recv(connections[curThread].connec[task], request, sizeof(request), 0) <= 0){
-            printf("Connection Broke.\n");
-            if(endTask(curThread, task) != 0){
-                printf("Err closing %d task of %d Thread: %d\n", task, curThread, WSAGetLastError());
-            }
-            continue;
+        int recvV = recv(connections[curThread].connec[task], request, sizeof(request), 0);
+        switch(recvV){
+            case 0:
+                printf("Connection Broke.\n");
+                if(endTask(curThread, task) != 0){
+                    printf("Err closing %d task of %d Thread: %d\n", task, curThread, WSAGetLastError());
+                }
+                continue;
+                break;
+            
+            case SOCKET_ERROR:
+                int errWSA = WSAGetLastError();
+                printf("Err receiving request header: %d\n", errWSA);
+                if(errWSA == WSAEMSGSIZE){
+                    res.status = 413;
+                    resErr(&res);
+                }
+                else{
+                    continue;
+                }
+                break;
         }
 
-        struct responseH resH;
-        struct requestH reqH;
-
-        resH.fSize = 0;
-        resH.protocol = "HTTP/1.1";
-        resH.status = -1;
-        resH.res = NULL;
-
-        readHeader(request, &reqH, &errC);     //read the header and put the data into reqH
-        if(errC != 400 && bodyN == TRUE){
+        readHeader(request, &reqH, &res);     //read the header and put the data into reqH
+        if(res.bodyN == TRUE){
             createURL(reqH.file);
             //resH.fType = "image/jpeg";
-            readFile(&file, &fSize, reqH.file, &errC);
-            resH.fSize = fSize;
-        }
-        if(errC == 404 || bodyN == FALSE){
-            file = "";
-            fSize = 0;
+            readFile(&res, reqH.file);
         }
 
-        response(&header, &hSize, errC, &bodyN, &resH);
-        char *res = NULL;
-        binsprintf(&res, header, hSize, file, fSize);
-
-        int byteS = send(connections[curThread].connec[task], res, hSize + fSize, 0);
-        if(byteS == SOCKET_ERROR){
-            printf("Err sending msg: %d\n", WSAGetLastError());
-        }
-
-        if(file != NULL){
-            if(fSize != 0){
-                free(file);
-            }
-        }
-        
-        free(header);
-        free(res);
+        response(&res);
+        sendRes(res);
 
         if(endTask(curThread, task) != 0){
             printf("Err closing %d task of %d Thread: %d\n", task, curThread, WSAGetLastError());
@@ -385,7 +503,6 @@ int main()
     setsockopt(listen_sock6, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&optVal, optlen);
 
     SOCKADDR_IN6 serverAddr6;
-
     ZeroMemory(&serverAddr6, sizeof(serverAddr6));
 
     int port = 0;
@@ -425,12 +542,13 @@ int main()
         }
 
         argList[curThread] = curThread;
-        connections[curThread].Thread = (HANDLE)_beginthreadex(NULL, 0, process, (void *)&argList[curThread], 0,  &threadID);
+        connections[curThread].Thread = (HANDLE)_beginthreadex(NULL, 0, Thread, (void *)&argList[curThread], 0,  &threadID);
 
         if(connections[curThread].Thread == 0){
             if(retryT < 2){
                 printf("Err starting Nr. %d Thread\n", curThread);
                 curThread--;
+                retryT++;
                 continue;
             }
             else{
@@ -439,15 +557,14 @@ int main()
         }
     }
 
-    int t = (unsigned)time(NULL);
     int curThread = 0;
     SOCKET csock;
     SOCKADDR_STORAGE client;
 
     int len = sizeof(SOCKADDR_STORAGE);
 
-    for(int i = 0; ; i++){
-        srand(t + i);
+    srand((unsigned)time(NULL));
+    for( ; ; ){
         curThread = (rand() % number_connection);
 
         csock = accept(listen_sock6, (struct sockaddr *)&client, &len);
@@ -470,7 +587,6 @@ int main()
             closesocket(connections[i].connec[j]);
         }
     }
-
     WSACleanup();
     return 0;
 }
