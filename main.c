@@ -21,6 +21,7 @@ const char *doc413 = NULL;
 const char *doc500 = NULL;
 const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite";
 const char *INDEX = "index.html";
+char *mimeTypes = NULL;
 
 
 void CALLBACK APCf(ULONG_PTR);
@@ -51,6 +52,7 @@ struct requestH
     char *protocol;
     char *file;
     char *Host;
+    BOOLEAN ifcgi;  //denote whether cgi or not
 };
 
 struct response
@@ -62,6 +64,7 @@ struct response
     char *fType;
     char *body;
     char *header;
+    char *mimeType;
     int hSize;
     SOCKET sock;
     BOOLEAN bodyN;  //denote whether a real body is required
@@ -70,6 +73,73 @@ struct response
 struct connection connections[number_connection];
 
 void CALLBACK APCf(ULONG_PTR param){}
+
+int checkType(struct response *res, char *url)
+{
+    int len = strlen(url);
+    int i;
+    for(i = (len - 1); i >= 0; i--){
+        if(url[i] == '.'){
+            break;
+        }
+    }
+    char ext[10];
+    ZeroMemory(ext, 10);
+    for(int j = 0; j < len - i; j++){
+        ext[j] = url[j + i];
+    }
+    char *line = NULL;
+    line = strstr(mimeTypes, ext);
+    if(line == NULL){
+        printf("Err finding the Type\n");
+        res->mimeType = NULL;
+        return 1;
+    }
+    int linelen;
+    for(linelen = 0; line[linelen] != ';'; linelen++){}
+    for(i = 0; i < linelen; i++){
+        if(line[i] == '='){
+            i++;
+            break;
+        }
+    }
+    res->mimeType = (char *)malloc(linelen);
+    ZeroMemory(res->mimeType, linelen);
+    for(int j = 0; j < linelen && line[i + j] != ';'; j++){
+        res->mimeType[j] = line[i + j];
+    }
+    return 0;
+}
+
+int initTypes()
+{
+    FILE *f;
+
+    fopen_s(&f, "mime.types", "rt");
+
+    if(f == NULL){
+        return 1;
+    }
+    else{
+        _fseeki64(f, 0, SEEK_END);
+        int fSize = _ftelli64(f);
+        _fseeki64(f, 0, SEEK_SET);
+
+        mimeTypes = (char *)malloc(fSize + 1);
+        ZeroMemory(mimeTypes, fSize + 1);
+        if(mimeTypes == NULL){
+            printf("Err initiating memory for reading mime.types\n");
+            return 1;
+        }
+        else{
+            int check = 0;
+            check = fread_s((void *)mimeTypes, fSize, fSize, 1, f);
+            mimeTypes[fSize] = '\0';
+        }
+    }
+    fclose(f);
+    return 0;
+}
 
 int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2)
 {
@@ -157,29 +227,6 @@ int response(struct response *res)
     res->hSize = 1024;
     int len = 0;
 
-    switch(res->status){
-        case 200:
-            res->res = "OK";
-            res->bodyN = TRUE;
-            break;
-        
-        case 400:
-            res->res = "Bad Request";
-            res->bodyN = FALSE;
-            break;
-
-        case 404:
-            res->res = "Not Found";
-            res->bodyN = FALSE;
-            break;
-        
-        default:
-            res->status = 500;
-            res->res = "Internal Server Error";
-            res->bodyN = FALSE;
-            break;
-    }
-
     res->protocol = _strdup(protocol);
     res->header = (char *)malloc(res->hSize);
     ZeroMemory(res->header, res->hSize);
@@ -189,6 +236,9 @@ int response(struct response *res)
         return 500;
     }
     len = snprintf(res->header, res->hSize, "%s %d %s\r\nAccept-Ranges: bytes\r\n", res->protocol, res->status, res->res);
+    if(res->mimeType != NULL){
+        len = snprintf(res->header, res->hSize, "%sContent-Type: %s; charset=utf-8\r\n", res->header, res->mimeType);
+    }
     if(res->fSize != 0){
         len = snprintf(res->header, res->hSize, "%sContent-Length: %lld\r\n", res->header, res->fSize);
     }
@@ -215,14 +265,14 @@ int addToList(int curThread, SOCKET csock, SOCKADDR_STORAGE *client)
 
 int readFile(struct response *res, char *rurl)
 {
-    FILE *f;
+    FILE *f = NULL;
     size_t urllen = strlen(DIR) + strlen(rurl);
     char *url = (char *)malloc(urllen + 1);
     ZeroMemory(url, urllen + 1);
 
     int test = snprintf(url, urllen + 1, "%s%s", DIR, rurl);
 
-    fopen_s(&f, url, "rb");
+    fopen_s(&f, url, "rb, ccs=utf-8");
 
     if(f == NULL){
         free(url);
@@ -246,10 +296,11 @@ int readFile(struct response *res, char *rurl)
         else{
             int check = 0;
             check = fread_s((void *)res->body, res->fSize, res->fSize, 1, f);
+            checkType(res, url);
         }
+        free(url);
     }
     fclose(f);
-    free(url);
     return 0;
 }
 
@@ -381,6 +432,9 @@ int sendRes(struct response res)
             free(res.body);
         }
     }
+    if(res.mimeType != NULL){
+        free(res.mimeType);
+    }
     free(res.header);
     free(resMsg);
     return 0;
@@ -394,8 +448,6 @@ unsigned int __stdcall Thread(void *arglist)
     struct response res;
     struct requestH reqH;
 
-    //char *header = NULL;
-    char *file = NULL;
     char ip[50];
     char date[9];
     char time[9];
@@ -424,6 +476,9 @@ unsigned int __stdcall Thread(void *arglist)
         res.hSize = 0;
         res.sock = connections[curThread].connec[task];
         res.bodyN = TRUE;
+        /*ZeroMemory(res.mimeType, 50);
+        res.mimeType[0] = '\0';*/
+        res.mimeType = NULL;
 
         toIP(connections[curThread].client[task], ip);
 
@@ -494,6 +549,10 @@ int main()
     system("cls");
     WSADATA wsa;
     if(WSAStartup(MAKEWORD(1, 1), &wsa) != 0){
+        return 1;
+    }
+    if(initTypes() == 1){
+        printf("Err reading mime.types\n");
         return 1;
     }
     SOCKET listen_sock6 = socket(AF_INET6, SOCK_STREAM, 0);
@@ -587,6 +646,7 @@ int main()
             closesocket(connections[i].connec[j]);
         }
     }
+    free(mimeTypes);
     WSACleanup();
     return 0;
 }

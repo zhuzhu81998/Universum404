@@ -1,0 +1,3 @@
+.html,.htm=text/html;
+.jpeg,.jpg,.jpe=image/jpeg;
+.pdf=application/pdf;
