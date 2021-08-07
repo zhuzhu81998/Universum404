@@ -516,6 +516,9 @@ unsigned int __stdcall Thread(void *arglist)
                     resErr(&res);
                 }
                 else{
+                    if(endTask(curThread, task) != 0){
+                        printf("Err closing %d task of %d Thread: %d\n", task, curThread, WSAGetLastError());
+                    }
                     continue;
                 }
                 break;
