@@ -1,3 +1,12 @@
+.torrent=application/x-bittorrent;
+.json=application/json;
+.avi=video/x-msvideo;
+.txt,.text,.conf,.def,.list,.log,.in=text/plain;
+.mp4,mp4v,mpg4=video/mp4;
 .html,.htm=text/html;
 .jpeg,.jpg,.jpe=image/jpeg;
+.png=image/png;
+.bmp=image/bmp;
+.gif=image/gif;
+.ico=image/x-icon;
 .pdf=application/pdf;
