@@ -53,6 +53,7 @@ struct requestH
     char *file;
     char *Host;
     BOOLEAN ifcgi;  //denote whether cgi or not
+    char *querystring;
 };
 
 struct response
@@ -476,8 +477,6 @@ unsigned int __stdcall Thread(void *arglist)
         res.hSize = 0;
         res.sock = connections[curThread].connec[task];
         res.bodyN = TRUE;
-        /*ZeroMemory(res.mimeType, 50);
-        res.mimeType[0] = '\0';*/
         res.mimeType = NULL;
 
         toIP(connections[curThread].client[task], ip);
@@ -524,10 +523,12 @@ unsigned int __stdcall Thread(void *arglist)
                 break;
         }
 
-        readHeader(request, &reqH, &res);     //read the header and put the data into reqH
+        if(res.status != 413){
+            readHeader(request, &reqH, &res);     //read the header and put the data into reqH
+        }
+
         if(res.bodyN == TRUE){
             createURL(reqH.file);
-            //resH.fType = "image/jpeg";
             readFile(&res, reqH.file);
         }
 
