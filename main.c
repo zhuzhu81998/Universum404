@@ -13,6 +13,7 @@
 #define number_connection 100
 //#define number_process 10
 #define max_request_header_size 8000 //in bytes
+#define max_index_length 30
 
 const char *protocol = "HTTP/1.1";
 const char *doc400 = NULL;  //this file names must begin with "\\"
@@ -24,19 +25,21 @@ const char *INDEX = "index.html";
 char *mimeTypes = NULL;
 
 
-void CALLBACK APCf(ULONG_PTR);
+void CALLBACK APCf(ULONG_PTR param);
+int checkType(struct response *res, char *url);
+int initTypes();
 int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2);
 int readHeader(char *reqHeader, struct requestH *reqH, struct response *res);
-int createURL(char *);
+int createURL(struct requestH *reqH);
 int response(struct response *res);
-int addToList(int, SOCKET, SOCKADDR_STORAGE *);
-int readFile(struct response *res, char *rurl);
-int toIP(SOCKADDR_STORAGE *, char *);
-int endTask(int, int);
+int addToList(int curThread, SOCKET csock, SOCKADDR_STORAGE *client);
+int readFile(struct response *res, char *url);
+int toIP(SOCKADDR_STORAGE *storage, char *ip);
+int endTask(int curThread, int task);
 int fileForErr(struct response *res);
 int resErr(struct response *res);
 int sendRes(struct response res);
-unsigned int __stdcall Thread(void *);
+unsigned int __stdcall Thread(void *arglist);
 
 
 struct connection
@@ -204,22 +207,39 @@ int readHeader(char *reqHeader, struct requestH *reqH, struct response *res)
     return 0;
 }
 
-int createURL(char *wURL)
+int createURL(struct requestH *reqH)
 {
-    if(wURL == NULL){
+    if(reqH->file == NULL){
         return 1;
     }
-    if(strcmp("/", wURL) == 0){
-        snprintf(wURL, 25, "\\%s", INDEX);
-    }
-    else{
-        int len = strlen(wURL);
-        for(int i = 0; i < len; i++){
-            if(wURL[i] == '/'){
-                wURL[i] = '\\';
-            }
+    
+    int len = strlen(reqH->file);
+    int urllen = len + strlen(DIR) + max_index_length + 1;
+    char *url = (char *)malloc(urllen);
+    ZeroMemory(url, urllen);
+
+    for(int i = 0; i < len; i++){
+        if(reqH->file[i] == '/'){
+            reqH->file[i] = '\\';
         }
     }
+    snprintf(url, urllen, "%s%s", DIR, reqH->file);
+
+    DWORD dWord = GetFileAttributes(url);
+    if(dWord == INVALID_FILE_ATTRIBUTES){
+        free(url);
+        return 404;
+    }
+    if(dWord & FILE_ATTRIBUTE_DIRECTORY){
+        int urlstrlen = strlen(url);
+        if(url[urlstrlen - 1] == '\\'){
+            snprintf(url, urllen, "%s%s", url, INDEX);
+        }
+        else{
+            snprintf(url, urllen, "%s\\%s", url, INDEX);
+        }
+    }
+    reqH->file = url;
     return 0;
 }
 
@@ -264,14 +284,9 @@ int addToList(int curThread, SOCKET csock, SOCKADDR_STORAGE *client)
     return n;
 }
 
-int readFile(struct response *res, char *rurl)
+int readFile(struct response *res, char *url)
 {
     FILE *f = NULL;
-    size_t urllen = strlen(DIR) + strlen(rurl);
-    char *url = (char *)malloc(urllen + 1);
-    ZeroMemory(url, urllen + 1);
-
-    int test = snprintf(url, urllen + 1, "%s%s", DIR, rurl);
 
     fopen_s(&f, url, "rb, ccs=utf-8");
 
@@ -521,6 +536,9 @@ unsigned int __stdcall Thread(void *arglist)
                     continue;
                 }
                 break;
+
+            default:
+                break;
         }
 
         if(res.status != 413){
@@ -528,8 +546,14 @@ unsigned int __stdcall Thread(void *arglist)
         }
 
         if(res.bodyN == TRUE){
-            createURL(reqH.file);
-            readFile(&res, reqH.file);
+            int createURLres = createURL(&reqH);
+            if(createURLres == 404){
+                res.status = 404;
+                resErr(&res);
+            }
+            else{
+                readFile(&res, reqH.file);
+            }
         }
 
         response(&res);
