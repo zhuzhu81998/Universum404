@@ -4,6 +4,7 @@
 .txt,.text,.conf,.def,.list,.log,.in=text/plain;
 .mp4,mp4v,mpg4=video/mp4;
 .html,.htm=text/html;
+.css=text/css;
 .jpeg,.jpg,.jpe=image/jpeg;
 .png=image/png;
 .bmp=image/bmp;
