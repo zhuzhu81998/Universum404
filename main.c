@@ -26,6 +26,8 @@ char *mimeTypes = NULL;
 
 
 void CALLBACK APCf(ULONG_PTR param);
+int getQuery(struct requestH *reqH);
+int execute_cgi(struct requestH *reqH, struct response *res);
 int checkType(struct response *res, char *url);
 int initTypes();
 int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2);
@@ -56,7 +58,7 @@ struct requestH
     char *file;
     char *Host;
     BOOLEAN ifcgi;  //denote whether cgi or not
-    char *querystring;
+    char *query;
 };
 
 struct response
@@ -77,6 +79,44 @@ struct response
 struct connection connections[number_connection];
 
 void CALLBACK APCf(ULONG_PTR param){}
+
+int getQuery(struct requestH *reqH)
+{
+    reqH->ifcgi = FALSE;
+    int len = strlen(reqH->file);
+    int i;
+    for(i = 0; i < len; i++){
+        if(reqH->file[i] == '?'){
+            reqH->ifcgi = TRUE;
+            i++;
+            break;
+        }
+    }
+    if(reqH->ifcgi == FALSE){
+        reqH->query = NULL;
+        return 1;
+    }
+    reqH->query = (char *)malloc(len - i + 1);
+    ZeroMemory(reqH->query, len - i + 1);
+
+    for(int j = 0; j < len - i; j++){
+        reqH->query[j] = reqH->file[j + i];
+    }
+    reqH->query[len - i] = '\0';
+    i--;
+    reqH->file[i] = '\0';
+    return 0;
+}
+
+int execute_cgi(struct requestH *reqH, struct response *res)
+{
+    //execute cgi script
+
+    if(reqH->query != NULL){
+        free(reqH->query);
+    }
+    return 0;
+}
 
 int checkType(struct response *res, char *url)
 {
@@ -198,6 +238,9 @@ int readHeader(char *reqHeader, struct requestH *reqH, struct response *res)
             }
         }
         line = strtok_s(NULL, "\r\n", &next_line);
+    }
+    if(reqH->file != NULL){
+        getQuery(reqH);
     }
     if(reqH->file == NULL || reqH->protocol == NULL || reqH->method == NULL){
         res->status = 400;
@@ -486,7 +529,7 @@ unsigned int __stdcall Thread(void *arglist)
         res.fSize = 0;
         res.protocol = _strdup(protocol);
         res.status = 200;
-        res.res = NULL;
+        res.res = "OK";
         res.body = NULL;
         res.header = NULL;
         res.hSize = 0;
@@ -544,7 +587,9 @@ unsigned int __stdcall Thread(void *arglist)
         if(res.status != 413){
             readHeader(request, &reqH, &res);     //read the header and put the data into reqH
         }
-
+        if(reqH.ifcgi == TRUE){
+            execute_cgi(&reqH, &res);
+        }
         if(res.bodyN == TRUE){
             int createURLres = createURL(&reqH);
             if(createURLres == 404){
