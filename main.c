@@ -112,9 +112,7 @@ int execute_cgi(struct requestH *reqH, struct response *res)
 {
     //execute cgi script
 
-    if(reqH->query != NULL){
-        free(reqH->query);
-    }
+    free(reqH->query);
     return 0;
 }
 
@@ -486,14 +484,10 @@ int sendRes(struct response res)
         printf("Err sending msg: %d\n", WSAGetLastError());
     }
 
-    if(res.body != NULL){
-        if(res.fSize != 0){
-            free(res.body);
-        }
+    if(res.fSize != 0){
+        free(res.body);
     }
-    if(res.mimeType != NULL){
-        free(res.mimeType);
-    }
+    free(res.mimeType);
     free(res.header);
     free(resMsg);
     return 0;
@@ -648,11 +642,13 @@ int main()
     if(bind(listen_sock6, (struct sockaddr *)&serverAddr6, sizeof(serverAddr6)) == SOCKET_ERROR){
         printf("Err binding the socket: %d\n", WSAGetLastError());
         main();
+        return 1;
     }
 
     if(listen(listen_sock6, SOMAXCONN) == SOCKET_ERROR){
         printf("Err setting listen socket: %d\n", WSAGetLastError());
         main();
+        return 1;
     }
 
     unsigned int threadID;
@@ -670,6 +666,7 @@ int main()
             }
             else{
                 main();
+                return 1;
             }
         }
 
@@ -685,6 +682,7 @@ int main()
             }
             else{
                 main();
+                return 1;
             }
         }
     }
