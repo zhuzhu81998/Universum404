@@ -26,10 +26,13 @@ char *mimeTypes = NULL;
 
 
 void CALLBACK APCf(ULONG_PTR param);
+int getInterpreter(struct requestH *reqH, char **ext);
 int getQuery(struct requestH *reqH);
 int execute_cgi(struct requestH *reqH, struct response *res);
+int getExt(char *url, char **ext);
 int checkType(struct response *res, char *url);
 int initTypes();
+int bincat(char **des, size_t *lendes, char *str, size_t lenstr);
 int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2);
 int readHeader(char *reqHeader, struct requestH *reqH, struct response *res);
 int createURL(struct requestH *reqH);
@@ -56,9 +59,15 @@ struct requestH
     char *method;
     char *protocol;
     char *file;
+    char *uri;
     char *Host;
     BOOLEAN ifcgi;  //denote whether cgi or not
     char *query;
+    char *cgi_interpreter;
+    char *body;
+    int Thread;
+    int task;
+    long long bSize;
 };
 
 struct response
@@ -79,6 +88,16 @@ struct response
 struct connection connections[number_connection];
 
 void CALLBACK APCf(ULONG_PTR param){}
+
+int getInterpreter(struct requestH *reqH, char **ext)
+{
+    if(strcmp(*ext, ".php") == 0){
+        reqH->cgi_interpreter = "php";
+    }
+    free(*ext);
+    *ext = NULL;
+    return 0;
+}
 
 int getQuery(struct requestH *reqH)
 {
@@ -111,12 +130,118 @@ int getQuery(struct requestH *reqH)
 int execute_cgi(struct requestH *reqH, struct response *res)
 {
     //execute cgi script
+    char *ext = NULL;
+    getExt(reqH->file, &ext);
+    getInterpreter(reqH, &ext);
 
+    HANDLE std_OUT_Read = NULL;
+    HANDLE std_OUT_Write = NULL;
+    HANDLE std_IN_Read = NULL;
+    HANDLE std_IN_Write = NULL;
+
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.lpSecurityDescriptor = NULL;
+    sa.bInheritHandle = TRUE;
+
+    if((CreatePipe(&std_OUT_Read, &std_OUT_Write, &sa, 0) == FALSE) || (CreatePipe(&std_IN_Read, &std_IN_Write, &sa, 0) == FALSE)){
+        res->status = 500;
+        resErr(res);
+        printf("Err creating Pipe\n");
+        return 1;
+    }
+    if ((SetHandleInformation(std_OUT_Read, HANDLE_FLAG_INHERIT, 0) == FALSE) || (SetHandleInformation(std_IN_Write, HANDLE_FLAG_INHERIT, 0) == FALSE)){
+        printf("Err setting handle information\n");
+    }
+
+    STARTUPINFO sui;
+    sui.cb = sizeof(STARTUPINFO);
+    GetStartupInfo(&sui);
+    sui.hStdError = std_OUT_Write;
+    sui.hStdOutput = std_OUT_Write;
+    sui.hStdInput = std_IN_Read;
+    sui.dwFlags |= STARTF_USESTDHANDLES;
+
+    char env[5000];
+    memset(env, 0, sizeof(env));
+    char tempenv[500];
+    char ip[50];
+    toIP(connections[reqH->Thread].client[reqH->task], ip);
+    snprintf(tempenv, sizeof(tempenv), "SYSTEMROOT=%s\0COMSPEC=%s\0PATH=%s\0WINDIR=%s\0GATEWAY_INTERFACE=CGI/1.1\0REMOTE_ADDR=%s\0SCRIPT_NAME=%s\0REQUEST_URI=%s\0QUERY_STRING=%s\0REQUEST_METHOD=%s\0\0", getenv("SYSTEMROOT"), getenv("COMSPEC"), getenv("PATH"), getenv("WINDIR"), ip, reqH->file, reqH->uri, reqH->query, reqH->method);
+
+    if(stricmp(reqH->method, "POST") == 0 && reqH->body != 0){
+        DWORD nWritten;
+        WriteFile(std_IN_Write, reqH->body, strlen(reqH->body), &nWritten, NULL);
+    }
+
+    createURL(reqH);
+    int len = strlen(reqH->file) + 1 + strlen(reqH->cgi_interpreter);
+    char *cmd = (char *)malloc(len + 1);
+    ZeroMemory(cmd, len + 1);
+    snprintf(cmd, len + 1, "%s %s", reqH->cgi_interpreter, reqH->file);
+
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+
+    DWORD dwCreationFlags = CREATE_NO_WINDOW;
+    
+    if(CreateProcessA(NULL, cmd, NULL, NULL, TRUE, 0, NULL, NULL, &sui, &pi) == FALSE){
+        printf("Err creating process: %d\n", GetLastError());
+    }
+
+    free(cmd);
+    cmd = NULL;
+
+    res->fSize = 0;
+
+    DWORD nRead;
+    DWORD Size = 0; 
+
+    char bufRead[100];
+    ZeroMemory(bufRead, 100);
+    res->body = (char *)malloc(100);
+    ZeroMemory(res->body, 100);
+
+    BOOLEAN bSuccess = FALSE;
+    
+    if(std_OUT_Write != NULL){
+        CloseHandle(std_OUT_Write);
+        std_OUT_Write = NULL;
+    }
+    bSuccess = ReadFile(std_OUT_Read, res->body, 100, &Size, NULL);
+    if(bSuccess == FALSE || Size == 0){
+        if(GetLastError() != ERROR_MORE_DATA){
+            printf("Err reading Pipe: %d\n", GetLastError());
+            res->status = 500;
+            resErr(res);
+            return 1;
+        }
+    }
+    while(TRUE){
+        bSuccess = FALSE;
+        bSuccess = ReadFile(std_OUT_Read, bufRead, 100, &nRead, NULL);
+        if(bSuccess == FALSE || nRead == 0){
+            break;
+        }
+        bincat(&(res->body), &Size, bufRead, nRead);
+        ZeroMemory(bufRead, 100);
+        nRead = 0;
+    }
+    res->fSize = Size;
+
+    res->bodyN = FALSE;
     free(reqH->query);
+    reqH->query = NULL;
+
+    CloseHandle(std_OUT_Read);
+    CloseHandle(std_IN_Read);
+    CloseHandle(std_IN_Write);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
     return 0;
 }
 
-int checkType(struct response *res, char *url)
+int getExt(char *url, char **ext)
 {
     int len = strlen(url);
     int i;
@@ -125,11 +250,18 @@ int checkType(struct response *res, char *url)
             break;
         }
     }
-    char ext[10];
-    ZeroMemory(ext, 10);
+    *ext = (char *)malloc(10);
+    ZeroMemory(*ext, 10);
     for(int j = 0; j < len - i; j++){
-        ext[j] = url[j + i];
+        (*ext)[j] = url[j + i];
     }
+    return 0;
+}
+
+int checkType(struct response *res, char *url)
+{
+    char *ext = NULL;
+    getExt(url, &ext);
     char *line = NULL;
     line = strstr(mimeTypes, ext);
     if(line == NULL){
@@ -139,6 +271,7 @@ int checkType(struct response *res, char *url)
     }
     int linelen;
     for(linelen = 0; line[linelen] != ';'; linelen++){}
+    int i;
     for(i = 0; i < linelen; i++){
         if(line[i] == '='){
             i++;
@@ -150,6 +283,7 @@ int checkType(struct response *res, char *url)
     for(int j = 0; j < linelen && line[i + j] != ';'; j++){
         res->mimeType[j] = line[i + j];
     }
+    free(ext);
     return 0;
 }
 
@@ -181,6 +315,19 @@ int initTypes()
     }
     fclose(f);
     return 0;
+}
+
+int bincat(char **des, size_t *lendes, char *str, size_t lenstr)
+{
+    int newlen = (*lendes) + lenstr;
+    char *buf = (char *)malloc(newlen);
+    ZeroMemory(buf, newlen);
+
+    int retVar = binsprintf(&buf, (*des), *lendes, str, lenstr);
+    free(*des);
+    (*des) = buf;
+    (*lendes) = newlen;
+    return retVar;
 }
 
 int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2)
@@ -224,6 +371,7 @@ int readHeader(char *reqHeader, struct requestH *reqH, struct response *res)
                 switch(j){
                     case 1:
                         reqH->file = word;
+                        reqH->uri = word;
                         break;
 
                     case 2:
@@ -520,6 +668,9 @@ unsigned int __stdcall Thread(void *arglist)
         }
         stoppoint = task;
 
+        reqH.task = task;
+        reqH.Thread = curThread;
+
         res.fSize = 0;
         res.protocol = _strdup(protocol);
         res.status = 200;
@@ -581,7 +732,7 @@ unsigned int __stdcall Thread(void *arglist)
         if(res.status != 413){
             readHeader(request, &reqH, &res);     //read the header and put the data into reqH
         }
-        if(reqH.ifcgi == TRUE){
+        if(reqH.ifcgi == TRUE && res.bodyN == TRUE){
             execute_cgi(&reqH, &res);
         }
         if(res.bodyN == TRUE){
