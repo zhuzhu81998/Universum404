@@ -28,11 +28,12 @@ char *mimeTypes = NULL;
 
 void CALLBACK APCf(ULONG_PTR param);
 int setEnv(char **env, struct requestH *reqH, struct response *res);
-int getInterpreter(struct requestH *reqH, char **ext);
+int getInterpreter(struct requestH *reqH);
+int setCGImimeType(struct requestH *reqH, struct response *res);
 int getQuery(struct requestH *reqH);
 int execute_cgi(struct requestH *reqH, struct response *res);
 int getExt(char *url, char **ext);
-int checkType(struct response *res, char *url);
+int checkType(struct requestH *reqH, struct response *res);
 int initTypes();
 int bincat(char **des, size_t *lendes, char *str, size_t lenstr);
 int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2);
@@ -63,13 +64,14 @@ struct requestH
     char *file;
     char *uri;
     char *Host;
-    BOOLEAN ifcgi;  //denote whether cgi or not
     char *query;
     char *cgi_interpreter;
     char *body;
     int Thread;
     int task;
     long long bSize;
+    char *ext;
+    BOOLEAN ifcgi;
 };
 
 struct response
@@ -118,13 +120,23 @@ int setEnv(char **env, struct requestH *reqH, struct response *res)
     return 0;
 }
 
-int getInterpreter(struct requestH *reqH, char **ext)
+int getInterpreter(struct requestH *reqH)
 {
-    if(strcmp(*ext, ".php") == 0){
+    if(strcmp(reqH->ext, ".php") == 0){
         reqH->cgi_interpreter = "php";
+        reqH->ifcgi = TRUE;
     }
-    free(*ext);
-    *ext = NULL;
+    return 0;
+}
+
+int setCGImimeType(struct requestH *reqH, struct response *res)
+{
+    res->mimeType = (char *)malloc(15);
+    ZeroMemory(res->mimeType, 15);
+
+    if(strcmp(reqH->ext, ".php") == 0){
+        strcpy_s(res->mimeType, 15, "text/html");
+    }
     return 0;
 }
 
@@ -159,10 +171,6 @@ int getQuery(struct requestH *reqH)
 int execute_cgi(struct requestH *reqH, struct response *res)
 {
     //execute cgi script
-    char *ext = NULL;
-    getExt(reqH->file, &ext);
-    getInterpreter(reqH, &ext);
-
     HANDLE std_OUT_Read = NULL;
     HANDLE std_OUT_Write = NULL;
     HANDLE std_IN_Read = NULL;
@@ -254,7 +262,7 @@ int execute_cgi(struct requestH *reqH, struct response *res)
         nRead = 0;
     }
     res->fSize = Size;
-
+    setCGImimeType(reqH, res);
     res->bodyN = FALSE;
     free(reqH->query);
     reqH->query = NULL;
@@ -284,12 +292,10 @@ int getExt(char *url, char **ext)
     return 0;
 }
 
-int checkType(struct response *res, char *url)
+int checkType(struct requestH *reqH, struct response *res)
 {
-    char *ext = NULL;
-    getExt(url, &ext);
     char *line = NULL;
-    line = strstr(mimeTypes, ext);
+    line = strstr(mimeTypes, reqH->ext);
     if(line == NULL){
         printf("Err finding the Type\n");
         res->mimeType = NULL;
@@ -309,8 +315,6 @@ int checkType(struct response *res, char *url)
     for(int j = 0; j < linelen && line[i + j] != ';'; j++){
         res->mimeType[j] = line[i + j];
     }
-    free(ext);
-    ext = NULL;
     return 0;
 }
 
@@ -528,7 +532,6 @@ int readFile(struct response *res, char *url)
         else{
             int check = 0;
             check = fread_s((void *)res->body, res->fSize, res->fSize, 1, f);
-            checkType(res, url);
         }
         free(url);
     }
@@ -658,13 +661,8 @@ int sendRes(struct response res)
     if(byteS == SOCKET_ERROR){
         printf("Err sending msg: %d\n", WSAGetLastError());
     }
-
-    if(res.fSize != 0){
-        free(res.body);
-    }
-    free(res.mimeType);
-    free(res.header);
     free(resMsg);
+    resMsg = NULL;
     return 0;
 }
 
@@ -697,6 +695,7 @@ unsigned int __stdcall Thread(void *arglist)
 
         reqH.task = task;
         reqH.Thread = curThread;
+        reqH.cgi_interpreter = NULL;
 
         res.fSize = 0;
         res.protocol = _strdup(protocol);
@@ -759,22 +758,35 @@ unsigned int __stdcall Thread(void *arglist)
         if(res.status != 413){
             readHeader(request, &reqH, &res);     //read the header and put the data into reqH
         }
+        int createURLres = createURL(&reqH);
+        if(createURLres == 404){
+            res.status = 404;
+            resErr(&res);
+        }
+        getExt(reqH.file, &(reqH.ext));
+        getInterpreter(&reqH);
         if(reqH.ifcgi == TRUE && res.bodyN == TRUE){
             execute_cgi(&reqH, &res);
         }
         if(res.bodyN == TRUE){
-            int createURLres = createURL(&reqH);
-            if(createURLres == 404){
-                res.status = 404;
-                resErr(&res);
-            }
-            else{
-                readFile(&res, reqH.file);
-            }
+            readFile(&res, reqH.file);
         }
-
+        if(res.fSize != 0 && res.mimeType == NULL){
+            checkType(&reqH, &res);
+        }
         response(&res);
         sendRes(res);
+
+        free(reqH.ext);
+        reqH.ext = NULL;
+        if(res.fSize != 0){
+            free(res.body);
+            res.body = NULL;
+        }
+        free(res.mimeType);
+        res.mimeType = NULL;
+        free(res.header);
+        res.header = NULL;
 
         if(endTask(curThread, task) != 0){
             printf("Err closing %d task of %d Thread: %d\n", task, curThread, WSAGetLastError());
