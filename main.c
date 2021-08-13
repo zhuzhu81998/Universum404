@@ -22,10 +22,12 @@ const char *doc413 = NULL;
 const char *doc500 = NULL;
 const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite";
 const char *INDEX = "index.html";
+const char *SERVER = "Universum404/0.0.1";
 char *mimeTypes = NULL;
 
 
 void CALLBACK APCf(ULONG_PTR param);
+int setEnv(char **env, struct requestH *reqH, struct response *res);
 int getInterpreter(struct requestH *reqH, char **ext);
 int getQuery(struct requestH *reqH);
 int execute_cgi(struct requestH *reqH, struct response *res);
@@ -88,6 +90,32 @@ struct response
 struct connection connections[number_connection];
 
 void CALLBACK APCf(ULONG_PTR param){}
+
+int setEnv(char **env, struct requestH *reqH, struct response *res)
+{
+    *env = (char *)malloc(100);
+    ZeroMemory(*env, 100);
+    char *buf = (char *)malloc(100);
+    ZeroMemory(buf, 100);
+    int len1 = 0;
+    int len2 = 0;
+
+    len1 = snprintf(*env, 100, "SERVER_SOFTWARE=%s", SERVER) + 1;
+    len2 = snprintf(buf, 100, "REQUEST_METHOD=%s", reqH->method) + 1;
+    bincat(env, &len1, buf, len2);
+    ZeroMemory(buf, 100);
+
+    len2 = snprintf(buf, 100, "QUERY_STRING=%s", reqH->query) + 1;
+    bincat(env, &len1, buf, len2);
+    ZeroMemory(buf, 100);
+
+    len2 = snprintf(buf, 100, "GATEWAY_INTERFACE=CGI/1.1") + 1;
+    bincat(env, &len1, buf, len2);
+
+    bincat(env, &len1, "\0", 1);
+
+    return 0;
+}
 
 int getInterpreter(struct requestH *reqH, char **ext)
 {
@@ -162,13 +190,6 @@ int execute_cgi(struct requestH *reqH, struct response *res)
     sui.hStdInput = std_IN_Read;
     sui.dwFlags |= STARTF_USESTDHANDLES;
 
-    char env[5000];
-    memset(env, 0, sizeof(env));
-    char tempenv[500];
-    char ip[50];
-    toIP(connections[reqH->Thread].client[reqH->task], ip);
-    snprintf(tempenv, sizeof(tempenv), "SYSTEMROOT=%s\0COMSPEC=%s\0PATH=%s\0WINDIR=%s\0GATEWAY_INTERFACE=CGI/1.1\0REMOTE_ADDR=%s\0SCRIPT_NAME=%s\0REQUEST_URI=%s\0QUERY_STRING=%s\0REQUEST_METHOD=%s\0\0", getenv("SYSTEMROOT"), getenv("COMSPEC"), getenv("PATH"), getenv("WINDIR"), ip, reqH->file, reqH->uri, reqH->query, reqH->method);
-
     if(stricmp(reqH->method, "POST") == 0 && reqH->body != 0){
         DWORD nWritten;
         WriteFile(std_IN_Write, reqH->body, strlen(reqH->body), &nWritten, NULL);
@@ -185,10 +206,14 @@ int execute_cgi(struct requestH *reqH, struct response *res)
 
     DWORD dwCreationFlags = CREATE_NO_WINDOW;
     
-    if(CreateProcessA(NULL, cmd, NULL, NULL, TRUE, 0, NULL, NULL, &sui, &pi) == FALSE){
+    char *env = NULL;
+    setEnv(&env, reqH, res);
+    if(CreateProcessA(NULL, cmd, NULL, NULL, TRUE, 0, env, NULL, &sui, &pi) == FALSE){
         printf("Err creating process: %d\n", GetLastError());
     }
 
+    free(env);
+    env = NULL;
     free(cmd);
     cmd = NULL;
 
