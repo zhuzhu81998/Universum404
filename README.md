@@ -1,15 +1,19 @@
 # Universum404
- A simple http web server written in C for Windows.  
- Compiled successfully for Windows 10 x64 with cl  
- Next steps (updated at 7/31/2021):
- 1. finish the function of interpreting/creating http headers &nbsp;&nbsp;&nbsp;&nbsp;(half done)
- 2. ~~finish the basic function of a html server~~
- 3. ~~add ipv6 support~~
- 4. ~~add connections timeout~~
- 5. ~~add image support~~
- 6. add ssl support
- 7. add php support
+## General
+ A simple multi-threaded http web server written in pure C for Windows.  
+ Compiled successfully for Windows 10 x64 with vc++
+
+## TODO (updated at 08/13/2021)
+ 1. (half done) finish the function of interpreting/creating http headers
+ 2. add cookie support
+ 3. add ssl support
 
 ## What can this server already do?
-- sending and receiving http headers
-- response with requested files
+ - support both ipv4 and ipv6
+ - process requests multi-threaded
+ - response with requested files (including binary files)
+ - support cgi scripts (for now only php with GET method)
+ - check mime type with a mime.types file
+
+## Known problems
+ 1. memory leak somewhere (the memory usage increases with every request)
