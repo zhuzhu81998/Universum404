@@ -114,6 +114,7 @@ int setEnv(char **env, struct requestH *reqH, struct response *res)
 
     bincat(env, &len1, "\0", 1);
 
+    free(buf);
     return 0;
 }
 
@@ -309,6 +310,7 @@ int checkType(struct response *res, char *url)
         res->mimeType[j] = line[i + j];
     }
     free(ext);
+    ext = NULL;
     return 0;
 }
 
