@@ -12,6 +12,7 @@
 
 #define number_connection 100
 //#define number_process 10
+#define number_task 10
 #define max_request_header_size 8000 //in bytes
 #define max_index_length 30
 
@@ -52,9 +53,9 @@ unsigned int __stdcall Thread(void *arglist);
 
 struct connection
 {
-    SOCKET connec[10];
+    SOCKET connec[number_task];
     HANDLE Thread;
-    SOCKADDR_STORAGE *client[10];
+    SOCKADDR_STORAGE *client[number_task];
 };
 
 struct requestH
@@ -492,7 +493,7 @@ int response(struct response *res)
 int addToList(int curThread, SOCKET csock, SOCKADDR_STORAGE *client)
 {
     int n = 1;
-    for(int i = 0; i <= 9; i++){
+    for(int i = 0; i < number_task; i++){
         if(connections[curThread].connec[i] == '\0'){
             connections[curThread].connec[i] = csock;
             connections[curThread].client[i] = client;
@@ -682,7 +683,7 @@ unsigned int __stdcall Thread(void *arglist)
     SleepEx(INFINITE, TRUE);
 
     for(int task = 0; ; task++){
-        if(task > 9){
+        if(task > (number_task - 1)){
             task = 0;
         }
         if(connections[curThread].connec[task] == '\0'){
