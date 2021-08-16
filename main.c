@@ -96,10 +96,8 @@ void CALLBACK APCf(ULONG_PTR param){}
 
 int setEnv(char **env, struct requestH *reqH, struct response *res)
 {
-    *env = (char *)malloc(100);
-    ZeroMemory(*env, 100);
-    char *buf = (char *)malloc(100);
-    ZeroMemory(buf, 100);
+    *env = calloc(100, sizeof(char));
+    char *buf = calloc(100, sizeof(char));
     int len1 = 0;
     int len2 = 0;
 
@@ -132,8 +130,7 @@ int getInterpreter(struct requestH *reqH)
 
 int setCGImimeType(struct requestH *reqH, struct response *res)
 {
-    res->mimeType = (char *)malloc(15);
-    ZeroMemory(res->mimeType, 15);
+    res->mimeType = calloc(15, sizeof(char));
 
     if(strcmp(reqH->ext, ".php") == 0){
         strcpy_s(res->mimeType, 15, "text/html");
@@ -157,8 +154,7 @@ int getQuery(struct requestH *reqH)
         reqH->query = NULL;
         return 1;
     }
-    reqH->query = (char *)malloc(len - i + 1);
-    ZeroMemory(reqH->query, len - i + 1);
+    reqH->query = calloc(len - i + 1, sizeof(char));
 
     for(int j = 0; j < len - i; j++){
         reqH->query[j] = reqH->file[j + i];
@@ -207,8 +203,7 @@ int execute_cgi(struct requestH *reqH, struct response *res)
 
     createURL(reqH);
     int len = strlen(reqH->file) + 1 + strlen(reqH->cgi_interpreter);
-    char *cmd = (char *)malloc(len + 1);
-    ZeroMemory(cmd, len + 1);
+    char *cmd = calloc(len + 1, sizeof(char));
     snprintf(cmd, len + 1, "%s %s", reqH->cgi_interpreter, reqH->file);
 
     PROCESS_INFORMATION pi;
@@ -234,8 +229,7 @@ int execute_cgi(struct requestH *reqH, struct response *res)
 
     char bufRead[100];
     ZeroMemory(bufRead, 100);
-    res->body = (char *)malloc(100);
-    ZeroMemory(res->body, 100);
+    res->body = calloc(100, sizeof(char));
 
     BOOLEAN bSuccess = FALSE;
     
@@ -285,8 +279,7 @@ int getExt(char *url, char **ext)
             break;
         }
     }
-    *ext = (char *)malloc(10);
-    ZeroMemory(*ext, 10);
+    *ext = calloc(len - i + 1, sizeof(char));
     for(int j = 0; j < len - i; j++){
         (*ext)[j] = url[j + i];
     }
@@ -311,8 +304,7 @@ int checkType(struct requestH *reqH, struct response *res)
             break;
         }
     }
-    res->mimeType = (char *)malloc(linelen);
-    ZeroMemory(res->mimeType, linelen);
+    res->mimeType = calloc(linelen, sizeof(char));
     for(int j = 0; j < linelen && line[i + j] != ';'; j++){
         res->mimeType[j] = line[i + j];
     }
@@ -333,8 +325,7 @@ int initTypes()
         int fSize = _ftelli64(f);
         _fseeki64(f, 0, SEEK_SET);
 
-        mimeTypes = (char *)malloc(fSize + 1);
-        ZeroMemory(mimeTypes, fSize + 1);
+        mimeTypes = calloc(fSize + 1, sizeof(char));
         if(mimeTypes == NULL){
             printf("Err initiating memory for reading mime.types\n");
             return 1;
@@ -352,8 +343,7 @@ int initTypes()
 int bincat(char **des, size_t *lendes, char *str, size_t lenstr)
 {
     int newlen = (*lendes) + lenstr;
-    char *buf = (char *)malloc(newlen);
-    ZeroMemory(buf, newlen);
+    char *buf = calloc(newlen, sizeof(char));
 
     int retVar = binsprintf(&buf, (*des), *lendes, str, lenstr);
     free(*des);
@@ -368,12 +358,11 @@ int binsprintf(char **buf, char *str1, size_t len1, char *str2, size_t len2)
         printf("Err wrong pointer: \"%s\" and \"%s\"\n", str1, str2);
         return 500;
     }
-    *buf = (char *)malloc(len1 + len2);
+    *buf = calloc(len1 + len2, sizeof(char));
     if(*buf == NULL){
         printf("Err initiating memory for reading files\n");
         return 500;
     }
-    ZeroMemory(*buf, len1 + len2);
     int i = 0, j = 0;
     for(i = 0; i < len1; i++){
         (*buf)[i] = str1[i];
@@ -402,8 +391,9 @@ int readHeader(char *reqHeader, struct requestH *reqH, struct response *res)
                 word = strtok_s(NULL, " ", &next_word);
                 switch(j){
                     case 1:
-                        reqH->file = word;
-                        reqH->uri = word;
+                        int len = strlen(word) + 1;
+                        reqH->file = calloc(len + 1, sizeof(char));
+                        strcpy_s(reqH->file, len, word);
                         break;
 
                     case 2:
@@ -436,8 +426,7 @@ int createURL(struct requestH *reqH)
     
     int len = strlen(reqH->file);
     int urllen = len + strlen(DIR) + max_index_length + 1;
-    char *url = (char *)malloc(urllen);
-    ZeroMemory(url, urllen);
+    char *url = calloc(urllen + 1, sizeof(char));
 
     for(int i = 0; i < len; i++){
         if(reqH->file[i] == '/'){
@@ -449,6 +438,7 @@ int createURL(struct requestH *reqH)
     DWORD dWord = GetFileAttributes(url);
     if(dWord == INVALID_FILE_ATTRIBUTES){
         free(url);
+        url = NULL;
         return 404;
     }
     if(dWord & FILE_ATTRIBUTE_DIRECTORY){
@@ -460,6 +450,8 @@ int createURL(struct requestH *reqH)
             snprintf(url, urllen, "%s\\%s", url, INDEX);
         }
     }
+    free(reqH->file);
+    reqH->file = NULL;
     reqH->file = url;
     return 0;
 }
@@ -470,8 +462,7 @@ int response(struct response *res)
     int len = 0;
 
     res->protocol = _strdup(protocol);
-    res->header = (char *)malloc(res->hSize);
-    ZeroMemory(res->header, res->hSize);
+    res->header = calloc(res->hSize, sizeof(char));
     if(res->header == NULL){
         printf("Err initiating memory\n");
         res->status = 500;
@@ -512,7 +503,6 @@ int readFile(struct response *res, char *url)
     fopen_s(&f, url, "rb, ccs=utf-8");
 
     if(f == NULL){
-        free(url);
         res->status = 404;
         resErr(res);
         return 404;
@@ -522,8 +512,7 @@ int readFile(struct response *res, char *url)
         res->fSize = _ftelli64(f);
         _fseeki64(f, 0, SEEK_SET);
 
-        res->body = (char *)malloc(res->fSize);
-        ZeroMemory(res->body, res->fSize);
+        res->body = calloc(res->fSize, sizeof(char));
         if(res->body == NULL){
             printf("Err initiating memory for reading files\n");
             res->status = 500;
@@ -534,7 +523,6 @@ int readFile(struct response *res, char *url)
             int check = 0;
             check = fread_s((void *)res->body, res->fSize, res->fSize, 1, f);
         }
-        free(url);
     }
     fclose(f);
     return 0;
@@ -671,14 +659,12 @@ unsigned int __stdcall Thread(void *arglist)
 {
     int curThread = *(int *)arglist;
     int stoppoint = 0;
-
-    struct response res;
-    struct requestH reqH;
+    DWORD timeout = 4500;
 
     char ip[50];
     char date[9];
     char time[9];
-    char request[max_request_header_size];
+    char *request = calloc(max_request_header_size, sizeof(char));
 
     SleepEx(INFINITE, TRUE);
 
@@ -694,20 +680,19 @@ unsigned int __stdcall Thread(void *arglist)
         }
         stoppoint = task;
 
+        struct response res;
+        struct requestH reqH;
+
+        ZeroMemory(&reqH, sizeof(struct requestH));
         reqH.task = task;
         reqH.Thread = curThread;
-        reqH.cgi_interpreter = NULL;
 
-        res.fSize = 0;
+        ZeroMemory(&res, sizeof(struct response));
         res.protocol = _strdup(protocol);
         res.status = 200;
         res.res = "OK";
-        res.body = NULL;
-        res.header = NULL;
-        res.hSize = 0;
         res.sock = connections[curThread].connec[task];
         res.bodyN = TRUE;
-        res.mimeType = NULL;
 
         toIP(connections[curThread].client[task], ip);
 
@@ -716,10 +701,8 @@ unsigned int __stdcall Thread(void *arglist)
         _strtime_s(time, 9);
 
         printf("%s %s | %s | %d | %d |\n", date, time, ip, curThread, task);
-        ZeroMemory(request, sizeof(request));
 
         //set timeout for recv
-        DWORD timeout = 4500;
         if(setsockopt(connections[curThread].connec[task], SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(DWORD)) != 0 ){
             printf("Err setting timeout: %d\n", WSAGetLastError());
             if(endTask(curThread, task) != 0){
@@ -727,7 +710,7 @@ unsigned int __stdcall Thread(void *arglist)
             }
         }
 
-        int recvV = recv(connections[curThread].connec[task], request, sizeof(request), 0);
+        int recvV = recv(connections[curThread].connec[task], request, max_request_header_size, 0);
         switch(recvV){
             case 0:
                 printf("Connection Broke.\n");
@@ -780,6 +763,9 @@ unsigned int __stdcall Thread(void *arglist)
 
         free(reqH.ext);
         reqH.ext = NULL;
+        free(reqH.file);
+        reqH.file = NULL;
+
         if(res.fSize != 0){
             free(res.body);
             res.body = NULL;
@@ -789,11 +775,13 @@ unsigned int __stdcall Thread(void *arglist)
         free(res.header);
         res.header = NULL;
 
+        ZeroMemory(request, max_request_header_size);
+
         if(endTask(curThread, task) != 0){
             printf("Err closing %d task of %d Thread: %d\n", task, curThread, WSAGetLastError());
         }
     }
-
+    free(request);
     if(CloseHandle(connections[curThread].Thread) == FALSE){
         printf("Err closing %d thread: %d\n", curThread, GetLastError());
     }
