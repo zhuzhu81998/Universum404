@@ -10,8 +10,8 @@
 #include <time.h>
 
 
-#define number_connection 100
-//#define number_process 10
+#define number_connection 20   //pro process
+#define number_process 5
 #define number_task 10
 #define max_request_header_size 8000 //in bytes
 #define max_index_length 30
@@ -25,6 +25,13 @@ const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite";
 const char *INDEX = "index.html";
 const char *SERVER = "Universum404/0.0.1";
 char *mimeTypes = NULL;
+char *self = NULL;
+
+HANDLE parent_main_thread = NULL;
+
+int m_port = 0;
+SOCKET m_listen_sock6;
+PROCESS_INFORMATION m_pi[number_process];
 
 
 void CALLBACK APCf(ULONG_PTR param);
@@ -49,6 +56,12 @@ int fileForErr(struct response *res);
 int resErr(struct response *res);
 int sendRes(struct response res);
 unsigned int __stdcall Thread(void *arglist);
+unsigned int __stdcall child_wait(void *arglist);
+int child_main(int argc, char **argv);
+int createChildProcess(int pID);
+void CALLBACK restart_Process(ULONG_PTR param);
+unsigned int __stdcall parent_wait(void *arglist);
+int parent_main(int argc, char **argv);
 
 
 struct connection
@@ -213,7 +226,7 @@ int execute_cgi(struct requestH *reqH, struct response *res)
     
     char *env = NULL;
     setEnv(&env, reqH, res);
-    if(CreateProcessA(NULL, cmd, NULL, NULL, TRUE, 0, env, NULL, &sui, &pi) == FALSE){
+    if(CreateProcessA(NULL, cmd, NULL, NULL, TRUE, dwCreationFlags, env, NULL, &sui, &pi) == FALSE){
         printf("Err creating process: %d\n", GetLastError());
     }
 
@@ -790,46 +803,37 @@ unsigned int __stdcall Thread(void *arglist)
     return 0;
 }
 
-int main()
+unsigned int __stdcall child_wait(void *arglist)
 {
-    system("cls");
+    DWORD parent_process_id = *(DWORD *)arglist;
+    HANDLE parent_process = OpenProcess(PROCESS_ALL_ACCESS, TRUE, parent_process_id);
+    if(WaitForSingleObject(parent_process, INFINITE) == WAIT_FAILED){
+        printf("Err child waiting: %lu\n", GetLastError());
+    }
+    CloseHandle(parent_process);
+    ExitProcess(0);
+    return 0;
+}
+
+int child_main(int argc, char **argv)
+{
+    printf("starting child process\n");
+    int c_wID;
+    DWORD parent_process_id = strtoul(argv[4], NULL, 10);
+    HANDLE c_wH = (HANDLE)_beginthreadex(NULL, 0, child_wait, (void *)&parent_process_id, 0, &c_wID);
+    int port = atoi(argv[2]);
+    SOCKET listen_sock6 = strtoull(argv[3], NULL, 10);
     WSADATA wsa;
-    if(WSAStartup(MAKEWORD(1, 1), &wsa) != 0){
+    int WSAerr = 0;
+    WSAerr = WSAStartup(MAKEWORD(1, 1), &wsa);
+    if(WSAerr != 0){
+        printf("Err starting WSA: %d\n", WSAerr);
         return 1;
     }
     if(initTypes() == 1){
         printf("Err reading mime.types\n");
         return 1;
     }
-    SOCKET listen_sock6 = socket(AF_INET6, SOCK_STREAM, 0);
-
-    int optVal = 0;
-    int optlen = sizeof(int);
-    setsockopt(listen_sock6, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&optVal, optlen);
-
-    SOCKADDR_IN6 serverAddr6;
-    ZeroMemory(&serverAddr6, sizeof(serverAddr6));
-
-    int port = 0;
-    printf("Please enter the port:\n");
-    scanf_s("%d", &port);
-
-    serverAddr6.sin6_family = AF_INET6;
-    serverAddr6.sin6_port = htons(port);
-    serverAddr6.sin6_addr = in6addr_any;
-
-    if(bind(listen_sock6, (struct sockaddr *)&serverAddr6, sizeof(serverAddr6)) == SOCKET_ERROR){
-        printf("Err binding the socket: %d\n", WSAGetLastError());
-        main();
-        return 1;
-    }
-
-    if(listen(listen_sock6, SOMAXCONN) == SOCKET_ERROR){
-        printf("Err setting listen socket: %d\n", WSAGetLastError());
-        main();
-        return 1;
-    }
-
     unsigned int threadID;
     int retryS = 0;
     int retryT = 0;
@@ -844,13 +848,13 @@ int main()
                 continue;
             }
             else{
-                main();
+                child_main(argc, argv);
                 return 1;
             }
         }
 
         argList[curThread] = curThread;
-        connections[curThread].Thread = (HANDLE)_beginthreadex(NULL, 0, Thread, (void *)&argList[curThread], 0,  &threadID);
+        connections[curThread].Thread = (HANDLE)_beginthreadex(NULL, 0, Thread, (void *)&argList[curThread], 0, &threadID);
 
         if(connections[curThread].Thread == 0){
             if(retryT < 2){
@@ -860,7 +864,7 @@ int main()
                 continue;
             }
             else{
-                main();
+                child_main(argc, argv);
                 return 1;
             }
         }
@@ -888,8 +892,7 @@ int main()
             continue;
         }
     }
-
-    closesocket(listen_sock6);
+    CloseHandle(c_wH);
     for(int i = 0; i < number_connection; i++){
         CloseHandle(connections[i].Thread);
         for(int j = 0; j <= 9; j++){
@@ -898,5 +901,124 @@ int main()
     }
     free(mimeTypes);
     WSACleanup();
+    return 0;
+}
+
+int createChildProcess(int pID)
+{
+    DWORD parent_process_id = GetCurrentProcessId();
+
+    ZeroMemory(&(m_pi[pID]), sizeof(PROCESS_INFORMATION));
+    STARTUPINFO sui;
+    sui.cb = sizeof(STARTUPINFO);
+    GetStartupInfo(&sui);
+
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.lpSecurityDescriptor = NULL;
+    sa.bInheritHandle = TRUE;
+
+    int len = strlen(self) + 50;
+    char *cmd = calloc(len, sizeof(char));
+    snprintf(cmd, len, "%s -child %d %llu %lu", self, m_port, (unsigned long long)m_listen_sock6, parent_process_id);
+    if(CreateProcessA(NULL, cmd, &sa, NULL, TRUE, 0, NULL, NULL, &sui, &(m_pi[pID])) == FALSE){
+        free(cmd);
+        return 1;
+    }
+    free(cmd);
+    return 0;
+}
+
+void CALLBACK restart_Process(ULONG_PTR param)
+{
+    printf("Recreating Process: %llu\n", (unsigned long long)param);
+    createChildProcess(param);
+}
+
+unsigned int __stdcall parent_wait(void *arglist)   //to check whether one of the processes is down
+{
+    int pID = *(int *)arglist;
+    free(arglist);
+    while(TRUE){
+        WaitForSingleObject(m_pi[pID].hProcess, INFINITE);
+        QueueUserAPC(restart_Process, parent_main_thread, pID);
+        Sleep(1000);
+    }
+    return 0;
+}
+
+int parent_main(int argc, char **argv)
+{
+    printf("Enter a port: ");
+    scanf_s("%d", &m_port);
+
+    WSADATA wsa;
+    if(WSAStartup(MAKEWORD(1, 1), &wsa) != 0){
+        return 1;
+    }
+
+    m_listen_sock6 = socket(AF_INET6, SOCK_STREAM, 0);
+    int optVal = 0;
+    int optlen = sizeof(int);
+    setsockopt(m_listen_sock6, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&optVal, optlen);
+
+    SOCKADDR_IN6 serverAddr6;
+    ZeroMemory(&serverAddr6, sizeof(serverAddr6));
+
+    serverAddr6.sin6_family = AF_INET6;
+    serverAddr6.sin6_port = htons(m_port);
+    serverAddr6.sin6_addr = in6addr_any;
+
+    if(bind(m_listen_sock6, (struct sockaddr *)&serverAddr6, sizeof(serverAddr6)) == SOCKET_ERROR){
+        printf("Err binding the socket: %d\n", WSAGetLastError());
+        parent_main(argc, argv);
+        return 1;
+    }
+
+    if(listen(m_listen_sock6, SOMAXCONN) == SOCKET_ERROR){
+        printf("Err setting listen socket: %d\n", WSAGetLastError());
+        parent_main(argc, argv);
+        return 1;
+    }
+
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &parent_main_thread, DUPLICATE_SAME_ACCESS, TRUE, DUPLICATE_SAME_ACCESS);
+
+    HANDLE parent_check_handle[number_process];
+
+    for(int i = 0; i < number_process; i++){
+        if(createChildProcess(i) == 1){
+            printf("Err creating process: %d\n", GetLastError());
+            continue;
+        }
+        int *argID = calloc(1, sizeof(int));
+        *argID = i;
+        int threadID = 0;
+        parent_check_handle[i] = (HANDLE)_beginthreadex(NULL, 0, parent_wait, (void *)argID, 0, &threadID);
+    }
+    for( ; ; ){
+        SleepEx(INFINITE, TRUE);
+    }
+    WSACleanup();
+    for(int i = 0; i < number_process; i++){
+        CloseHandle(m_pi[i].hProcess);
+        CloseHandle(parent_check_handle[i]);
+        TerminateProcess(m_pi[i].hProcess, 0);
+    }
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    self = calloc(strlen(argv[0]) + 1, sizeof(char));
+    strcpy(self, argv[0]);
+    if(argc >= 4){
+        if(strcmp(argv[1], "-child") == 0){
+            child_main(argc, argv);
+        }
+    }
+    else{
+        parent_main(argc, argv);
+    }
+    free(self);
     return 0;
 }
