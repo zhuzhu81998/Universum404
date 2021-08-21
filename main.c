@@ -713,7 +713,7 @@ unsigned int __stdcall Thread(void *arglist)
         _strdate_s(date, 9);
         _strtime_s(time, 9);
 
-        printf("%s %s | %s | %d | %d |\n", date, time, ip, curThread, task);
+        printf("%s %s | %s | %d | %d | %lu |\n", date, time, ip, curThread, task, GetCurrentProcessId());
 
         //set timeout for recv
         if(setsockopt(connections[curThread].connec[task], SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(DWORD)) != 0 ){
@@ -817,7 +817,7 @@ unsigned int __stdcall child_wait(void *arglist)
 
 int child_main(int argc, char **argv)
 {
-    printf("starting child process\n");
+    printf("starting child process: %lu\n", GetCurrentProcessId());
     int c_wID;
     DWORD parent_process_id = strtoul(argv[4], NULL, 10);
     HANDLE c_wH = (HANDLE)_beginthreadex(NULL, 0, child_wait, (void *)&parent_process_id, 0, &c_wID);
