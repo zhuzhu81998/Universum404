@@ -876,7 +876,7 @@ int child_main(int argc, char **argv)
 
     int len = sizeof(SOCKADDR_STORAGE);
 
-    srand((unsigned)time(NULL));
+    srand((unsigned)(time(NULL) + GetCurrentProcessId()));
     for( ; ; ){
         curThread = (rand() % number_connection);
 
