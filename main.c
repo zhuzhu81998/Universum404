@@ -23,11 +23,12 @@ const char *doc413 = NULL;
 const char *doc500 = NULL;
 const char *DIR = "D:\\Documents\\Project\\C++\\testWebsite";
 const char *INDEX = "index.html";
-const char *SERVER = "Universum404/0.0.1";
+const char *SERVER = "Universum404/1.0.0";
 char *mimeTypes = NULL;
 char *self = NULL;
 
 HANDLE parent_main_thread = NULL;
+HANDLE printInfoThread = NULL;
 
 int m_port = 0;
 SOCKET m_listen_sock6;
@@ -55,6 +56,7 @@ int endTask(int curThread, int task);
 int fileForErr(struct response *res);
 int resErr(struct response *res);
 int sendRes(struct response res);
+void CALLBACK printInfo(ULONG_PTR param);
 unsigned int __stdcall Thread(void *arglist);
 unsigned int __stdcall child_wait(void *arglist);
 int child_main(int argc, char **argv);
@@ -105,7 +107,10 @@ struct response
 
 struct connection connections[number_connection];
 
-void CALLBACK APCf(ULONG_PTR param){}
+void CALLBACK APCf(ULONG_PTR param)
+{
+    return;
+}
 
 int setEnv(char **env, struct requestH *reqH, struct response *res)
 {
@@ -481,7 +486,9 @@ int response(struct response *res)
         res->status = 500;
         return 500;
     }
-    len = snprintf(res->header, res->hSize, "%s %d %s\r\nAccept-Ranges: bytes\r\n", res->protocol, res->status, res->res);
+    len = snprintf(res->header, res->hSize, "%s %d %s\r\n", res->protocol, res->status, res->res);
+    len = snprintf(res->header, res->hSize, "%sServer: %s\r\n", res->header, SERVER);
+    len = snprintf(res->header, res->hSize, "%sAccept-Ranges: bytes\r\n", res->header);
     if(res->mimeType != NULL){
         len = snprintf(res->header, res->hSize, "%sContent-Type: %s; charset=utf-8\r\n", res->header, res->mimeType);
     }
@@ -668,6 +675,22 @@ int sendRes(struct response res)
     return 0;
 }
 
+void CALLBACK printInfo(ULONG_PTR param)
+{
+    char *msg = (char *)param;
+    printf("%s", msg);
+    free(msg);
+    return;
+}
+
+unsigned int __stdcall pprintInfo(void *arglist)
+{
+    for(;;){
+        SleepEx(INFINITE, TRUE);
+    }
+    return 0;
+}
+
 unsigned int __stdcall Thread(void *arglist)
 {
     int curThread = *(int *)arglist;
@@ -712,8 +735,10 @@ unsigned int __stdcall Thread(void *arglist)
         _tzset();
         _strdate_s(date, 9);
         _strtime_s(time, 9);
-
-        printf("%s %s | %s | %d | %d | %lu |\n", date, time, ip, curThread, task, GetCurrentProcessId());
+        int infoLen = strlen(date) + strlen(time) + strlen(ip) + 50;
+        char *info = malloc(infoLen + 1);
+        snprintf(info, infoLen, "%s %s | %s | %d | %d | %lu |\n", date, time, ip, curThread, task, GetCurrentProcessId());
+        QueueUserAPC(printInfo, printInfoThread, (ULONG_PTR)info);
 
         //set timeout for recv
         if(setsockopt(connections[curThread].connec[task], SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(DWORD)) != 0 ){
@@ -821,6 +846,10 @@ int child_main(int argc, char **argv)
     int c_wID;
     DWORD parent_process_id = strtoul(argv[4], NULL, 10);
     HANDLE c_wH = (HANDLE)_beginthreadex(NULL, 0, child_wait, (void *)&parent_process_id, 0, &c_wID);
+
+    int pIT_ID;
+    printInfoThread = (HANDLE)_beginthreadex(NULL, 0, pprintInfo, NULL, 0, &pIT_ID);
+
     int port = atoi(argv[2]);
     SOCKET listen_sock6 = strtoull(argv[3], NULL, 10);
     WSADATA wsa;
@@ -892,6 +921,7 @@ int child_main(int argc, char **argv)
             continue;
         }
     }
+    CloseHandle(printInfoThread);
     CloseHandle(c_wH);
     for(int i = 0; i < number_connection; i++){
         CloseHandle(connections[i].Thread);
@@ -933,6 +963,7 @@ void CALLBACK restart_Process(ULONG_PTR param)
 {
     printf("Recreating Process: %llu\n", (unsigned long long)param);
     createChildProcess(param);
+    return;
 }
 
 unsigned int __stdcall parent_wait(void *arglist)   //to check whether one of the processes is down
