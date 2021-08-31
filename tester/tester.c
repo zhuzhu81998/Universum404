@@ -46,13 +46,10 @@ unsigned int __stdcall process(void *arglist)
     unsigned int i = 0;
     int t = (unsigned)time(NULL);
     while(TRUE){
-        //client_sock[curThread] = socket(AF_INET, SOCK_STREAM, 0);
         client_sock[curThread] = socket(AF_INET, SOCK_STREAM, 0);
         if(connect(client_sock[curThread], (struct sockaddr *)&server, sizeof(server)) == 0){
             send(client_sock[curThread], httpR, strlen(httpR), 0);
             while(recv(client_sock[curThread], buf, 2048, 0) > 0){
-                //printf("%s", buf);
-                //printf("%d: %d\n", curThread, i);
                 numberofTests[curThread]++;
             }
             closesocket(client_sock[curThread]);
@@ -60,8 +57,6 @@ unsigned int __stdcall process(void *arglist)
         else{
             printf("Err: %d\n", WSAGetLastError());
         }
-        srand(t +  i);
-        Sleep(rand() % 11);
         i++;
     }
     _endthreadex(0);
